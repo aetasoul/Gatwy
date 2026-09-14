@@ -2,7 +2,7 @@ import { useEffect, useState, type FormEvent } from 'react';
 import type React from 'react';
 import { useSettings, invalidateSettings } from '../../hooks/useSettings';
 
-type Tab = 'general' | 'recordings';
+type Tab = 'general' | 'version-check' | 'recordings';
 
 function formatBytes(bytes: number): string {
   if (bytes === 0) return '0 B';
@@ -13,6 +13,7 @@ function formatBytes(bytes: number): string {
 
 const TABS: { id: Tab; label: string }[] = [
   { id: 'general', label: 'General' },
+  { id: 'version-check', label: 'Version Check' },
 ];
 
 // All IANA timezones supported by the runtime (Intl API).
@@ -73,6 +74,8 @@ export function GlobalSettings() {
   const [versionAuditLog, setVersionAuditLog] = useState(true);
   const [versionToast, setVersionToast] = useState(true);
   const [versionNotify, setVersionNotify] = useState(false);
+  const [versionMsg, setVersionMsg] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+  const [savingVersion, setSavingVersion] = useState(false);
 
   // Audit retention (shown in General tab)
   const [auditRetention, setAuditRetention] = useState('90');
@@ -138,15 +141,30 @@ export function GlobalSettings() {
         'audit.retention_days': auditRetention,
         'health_monitor.enabled': String(healthMonitorEnabled),
         'session.auto_close_disconnected_enabled': String(autoCloseDisconnected),
-        'version.audit_log_checks': String(versionAuditLog),
-        'version.toast_feedback': String(versionToast),
-        'version.notify_on_update': String(versionNotify),
       });
       setGeneralMsg(result.ok ? { type: 'success', text: 'Saved.' } : { type: 'error', text: result.error! });
     } catch {
       setGeneralMsg({ type: 'error', text: 'Network error.' });
     } finally {
       setSavingGeneral(false);
+    }
+  }
+
+  async function handleVersionCheckSave(e: FormEvent) {
+    e.preventDefault();
+    setSavingVersion(true);
+    setVersionMsg(null);
+    try {
+      const result = await saveSettings({
+        'version.audit_log_checks': String(versionAuditLog),
+        'version.toast_feedback': String(versionToast),
+        'version.notify_on_update': String(versionNotify),
+      });
+      setVersionMsg(result.ok ? { type: 'success', text: 'Saved.' } : { type: 'error', text: result.error! });
+    } catch {
+      setVersionMsg({ type: 'error', text: 'Network error.' });
+    } finally {
+      setSavingVersion(false);
     }
   }
 
@@ -293,30 +311,6 @@ export function GlobalSettings() {
             </div>
           </div>
 
-          <div className="border-t border-border pt-4 space-y-3">
-            <p className="text-xs font-semibold text-text-secondary uppercase tracking-wide">Version Check Behaviour</p>
-            <div className="flex items-center gap-3">
-              <Toggle value={versionAuditLog} onChange={setVersionAuditLog} />
-              <div>
-                <span className="text-sm text-text-secondary">Log manual checks to audit trail</span>
-                <p className="text-xs text-text-secondary/60 mt-0.5">Writes an entry to the audit log each time someone clicks "Check for updates", including the result and any error.</p>
-              </div>
-            </div>
-            <div className="flex items-center gap-3">
-              <Toggle value={versionToast} onChange={setVersionToast} />
-              <div>
-                <span className="text-sm text-text-secondary">Show toast after manual check</span>
-                <p className="text-xs text-text-secondary/60 mt-0.5">Displays a brief notification with the result — up to date, new version found, or unreachable.</p>
-              </div>
-            </div>
-            <div className="flex items-center gap-3">
-              <Toggle value={versionNotify} onChange={setVersionNotify} />
-              <div>
-                <span className="text-sm text-text-secondary">Fire notification rule on update available</span>
-                <p className="text-xs text-text-secondary/60 mt-0.5">Emits a <code className="text-xs bg-surface px-1 rounded">system.update_available</code> event you can use in notification rules to send an alert via email, Telegram, Slack, etc.</p>
-              </div>
-            </div>
-          </div>
           {generalMsg && (
             <p className={`text-sm ${generalMsg.type === 'success' ? 'text-green-500' : 'text-red-500'}`}>
               {generalMsg.text}
@@ -328,6 +322,45 @@ export function GlobalSettings() {
             className="px-4 py-2 bg-accent text-white rounded hover:bg-accent-hover disabled:opacity-50 text-sm font-medium"
           >
             {savingGeneral ? 'Saving...' : 'Save'}
+          </button>
+        </form>
+      )}
+
+      {/* Version Check */}
+      {activeTab === 'version-check' && (
+        <form onSubmit={handleVersionCheckSave} className="space-y-4 max-w-lg">
+          <div className="flex items-center gap-3">
+            <Toggle value={versionAuditLog} onChange={setVersionAuditLog} />
+            <div>
+              <span className="text-sm text-text-secondary">Log manual checks to audit trail</span>
+              <p className="text-xs text-text-secondary/60 mt-0.5">Writes an entry to the audit log each time someone clicks "Check for updates", including the result and any error.</p>
+            </div>
+          </div>
+          <div className="flex items-center gap-3">
+            <Toggle value={versionToast} onChange={setVersionToast} />
+            <div>
+              <span className="text-sm text-text-secondary">Show toast after manual check</span>
+              <p className="text-xs text-text-secondary/60 mt-0.5">Displays a brief notification with the result — up to date, new version found, or unreachable.</p>
+            </div>
+          </div>
+          <div className="flex items-center gap-3">
+            <Toggle value={versionNotify} onChange={setVersionNotify} />
+            <div>
+              <span className="text-sm text-text-secondary">Fire notification rule on update available</span>
+              <p className="text-xs text-text-secondary/60 mt-0.5">Emits a <code className="text-xs bg-surface px-1 rounded">system.update_available</code> event you can use in notification rules to send an alert via email, Telegram, Slack, etc.</p>
+            </div>
+          </div>
+          {versionMsg && (
+            <p className={`text-sm ${versionMsg.type === 'success' ? 'text-green-500' : 'text-red-500'}`}>
+              {versionMsg.text}
+            </p>
+          )}
+          <button
+            type="submit"
+            disabled={savingVersion}
+            className="px-4 py-2 bg-accent text-white rounded hover:bg-accent-hover disabled:opacity-50 text-sm font-medium"
+          >
+            {savingVersion ? 'Saving...' : 'Save'}
           </button>
         </form>
       )}
