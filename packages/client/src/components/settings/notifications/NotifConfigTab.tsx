@@ -1,13 +1,12 @@
 import { useState, useEffect, useCallback } from 'react';
 import type React from 'react';
+import { showToast } from '../../../hooks/useToast';
 
 interface ChannelData {
   id: string;
   enabled: boolean;
   config: Record<string, string | number | boolean>;
 }
-
-type MsgState = { type: 'success' | 'error'; text: string } | null;
 
 const API = '/api/v1/notifications';
 
@@ -50,13 +49,6 @@ function Toggle({ checked, onChange }: { checked: boolean; onChange: (v: boolean
     >
       <span className={`inline-block h-3.5 w-3.5 transform rounded-full bg-white shadow transition-transform ${checked ? 'translate-x-4' : 'translate-x-1'}`} />
     </button>
-  );
-}
-
-function StatusMsg({ msg }: { msg: MsgState }) {
-  if (!msg) return null;
-  return (
-    <p className={`text-xs ${msg.type === 'success' ? 'text-green-500' : 'text-red-500'}`}>{msg.text}</p>
   );
 }
 
@@ -121,25 +113,24 @@ function ProviderCard({
   );
   const [saving, setSaving] = useState(false);
   const [testing, setTesting] = useState(false);
-  const [msg, setMsg] = useState<MsgState>(null);
   const [open, setOpen] = useState(false);
 
   const setCfg = useCallback((k: string, v: string) => setCfgState((p) => ({ ...p, [k]: v })), []);
 
   async function save() {
-    setSaving(true); setMsg(null);
+    setSaving(true);
     const { ok, data } = await apiFetch(`/channels/${channelId}`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ enabled, config: cfg }),
     });
     setSaving(false);
-    setMsg(ok ? { type: 'success', text: 'Saved.' } : { type: 'error', text: data.error ?? 'Save failed' });
+    showToast(ok ? 'Saved.' : (data.error ?? 'Save failed'), ok ? 'success' : 'error');
     if (ok) onSaved();
   }
 
   async function test() {
-    setTesting(true); setMsg(null);
+    setTesting(true);
     // Build test overrides depending on channel
     let overrides: Record<string, string> = {};
     if (channelId === 'smtp') overrides = { to: cfg.smtp_from ?? '' };
@@ -149,7 +140,7 @@ function ProviderCard({
       body: JSON.stringify(overrides),
     });
     setTesting(false);
-    setMsg(ok ? { type: 'success', text: 'Test message sent!' } : { type: 'error', text: data.error ?? 'Test failed' });
+    showToast(ok ? 'Test message sent!' : (data.error ?? 'Test failed'), ok ? 'success' : 'error');
   }
 
   return (
@@ -197,7 +188,6 @@ function ProviderCard({
             >
               {testing ? 'Sending…' : 'Test'}
             </button>
-            <StatusMsg msg={msg} />
           </div>
         </div>
       )}

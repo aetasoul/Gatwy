@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useAuth } from '../../hooks/useAuth';
+import { ToastHost } from '../../hooks/useToast';
 import { ProfileSettings } from './ProfileSettings';
 import { SshPrefsSettings } from './SshPrefsSettings';
 import { SecuritySettings } from './SecuritySettings';
@@ -239,6 +240,7 @@ export function SettingsPanel({ isOpen, onClose, initialSection }: SettingsPanel
 
   return (
     <div className="fixed inset-x-0 top-12 bottom-0 z-40 flex">
+      <ToastHost />
       {/* Backdrop */}
       <div
         className="absolute inset-0 bg-black/40"

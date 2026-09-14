@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { useAuth } from '../../hooks/useAuth';
+import { showToast } from '../../hooks/useToast';
 
 interface SizeInfo { dbSize: number; recordingsSize: number; recordingCount: number }
 interface SmbConnection { id: string; name: string; host: string; port: number }
@@ -108,7 +109,6 @@ function ManualBackupTab() {
   const [exportPassword, setExportPassword] = useState('');
   const [exportConfirm, setExportConfirm] = useState('');
   const [exportLoading, setExportLoading] = useState(false);
-  const [exportMsg, setExportMsg] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
   const [includeRecordings, setIncludeRecordings] = useState(false);
   const [sizeInfo, setSizeInfo] = useState<SizeInfo | null>(null);
   const [sizeLoading, setSizeLoading] = useState(true);
@@ -116,7 +116,6 @@ function ManualBackupTab() {
   const [importPassword, setImportPassword] = useState('');
   const [importFile, setImportFile] = useState<File | null>(null);
   const [importLoading, setImportLoading] = useState(false);
-  const [importMsg, setImportMsg] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
   const [showConfirm, setShowConfirm] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
 
@@ -131,9 +130,8 @@ function ManualBackupTab() {
 
   async function handleExport(e: React.FormEvent) {
     e.preventDefault();
-    setExportMsg(null);
-    if (exportPassword.length < 8) { setExportMsg({ type: 'error', text: 'Password must be at least 8 characters.' }); return; }
-    if (exportPassword !== exportConfirm) { setExportMsg({ type: 'error', text: 'Passwords do not match.' }); return; }
+    if (exportPassword.length < 8) { showToast('Password must be at least 8 characters.', 'error'); return; }
+    if (exportPassword !== exportConfirm) { showToast('Passwords do not match.', 'error'); return; }
     setExportLoading(true);
     try {
       const res = await fetch('/api/v1/backup/export', {
@@ -143,7 +141,7 @@ function ManualBackupTab() {
       });
       if (!res.ok) {
         const d = await res.json() as { error: string };
-        setExportMsg({ type: 'error', text: d.error || 'Export failed.' });
+        showToast(d.error || 'Export failed.', 'error');
         return;
       }
       const blob = await res.blob();
@@ -155,11 +153,11 @@ function ManualBackupTab() {
       a.download = fname;
       a.click();
       URL.revokeObjectURL(url);
-      setExportMsg({ type: 'success', text: `Backup downloaded: ${fname}` });
+      showToast(`Backup downloaded: ${fname}`, 'success');
       setExportPassword('');
       setExportConfirm('');
     } catch {
-      setExportMsg({ type: 'error', text: 'Network error during export.' });
+      showToast('Network error during export.', 'error');
     } finally {
       setExportLoading(false);
     }
@@ -168,7 +166,6 @@ function ManualBackupTab() {
   async function doImport() {
     if (!importFile || !importPassword) return;
     setImportLoading(true);
-    setImportMsg(null);
     setShowConfirm(false);
     try {
       const arrayBuf = await importFile.arrayBuffer();
@@ -184,16 +181,16 @@ function ManualBackupTab() {
 
       if (!res.ok) {
         const msg = res.status === 422 ? 'Incorrect backup password.' : (d.error || `Import failed (HTTP ${res.status}).`);
-        setImportMsg({ type: 'error', text: msg });
+        showToast(msg, 'error');
         return;
       }
 
-      setImportMsg({ type: 'success', text: `${d.message ?? 'Restored.'} (${d.recordingsRestored ?? 0} recordings restored)` });
+      showToast(`${d.message ?? 'Restored.'} (${d.recordingsRestored ?? 0} recordings restored)`, 'success');
       setImportFile(null);
       setImportPassword('');
       if (fileRef.current) fileRef.current.value = '';
     } catch {
-      setImportMsg({ type: 'error', text: 'Network error during import.' });
+      showToast('Network error during import.', 'error');
     } finally {
       setImportLoading(false);
     }
@@ -232,7 +229,6 @@ function ManualBackupTab() {
         <form onSubmit={handleExport} className="space-y-3">
           <input type="password" value={exportPassword} onChange={(e) => setExportPassword(e.target.value)} placeholder="Backup password" className="w-full px-3 py-2 bg-surface border border-border rounded text-text-primary text-sm" />
           <input type="password" value={exportConfirm} onChange={(e) => setExportConfirm(e.target.value)} placeholder="Confirm password" className="w-full px-3 py-2 bg-surface border border-border rounded text-text-primary text-sm" />
-          {exportMsg && <p className={`text-sm ${exportMsg.type === 'success' ? 'text-green-500' : 'text-red-500'}`}>{exportMsg.text}</p>}
           <button type="submit" disabled={exportLoading} className="px-4 py-2 bg-accent text-white rounded hover:bg-accent-hover disabled:opacity-50 text-sm font-medium">
             {exportLoading ? 'Creating backup...' : 'Download Backup'}
           </button>
@@ -258,14 +254,11 @@ function ManualBackupTab() {
             </div>
           )}
 
-          {importMsg && <p className={`text-sm ${importMsg.type === 'success' ? 'text-green-500' : 'text-red-500'}`}>{importMsg.text}</p>}
-
           {!showConfirm && (
             <button
               onClick={() => {
-                if (!importFile) { setImportMsg({ type: 'error', text: 'Select a backup file first.' }); return; }
-                if (!importPassword) { setImportMsg({ type: 'error', text: 'Enter the backup password.' }); return; }
-                setImportMsg(null);
+                if (!importFile) { showToast('Select a backup file first.', 'error'); return; }
+                if (!importPassword) { showToast('Enter the backup password.', 'error'); return; }
                 setShowConfirm(true);
               }}
               disabled={importLoading}
@@ -289,7 +282,6 @@ function AutoBackupTab() {
   const [saving, setSaving] = useState(false);
   const [testing, setTesting] = useState(false);
   const [runningNow, setRunningNow] = useState(false);
-  const [msg, setMsg] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
 
   const [passwordSentinel, setPasswordSentinel] = useState('__unchanged__');
   const [config, setConfig] = useState<AutoConfig>({
@@ -360,7 +352,6 @@ function AutoBackupTab() {
 
   async function load() {
     setLoading(true);
-    setMsg(null);
     try {
       const [cfgRes, stRes, conRes, capRes] = await Promise.all([
         fetch('/api/v1/backup/auto/config', { credentials: 'include' }),
@@ -433,26 +424,25 @@ function AutoBackupTab() {
 
   async function saveConfig() {
     setSaving(true);
-    setMsg(null);
     try {
       if (!globalPassword && !hasPassword) {
-        setMsg({ type: 'error', text: 'Global backup password is required.' });
+        showToast('Global backup password is required.', 'error');
         return;
       }
       if (globalPassword && globalPassword.length < 8) {
-        setMsg({ type: 'error', text: 'Global backup password must be at least 8 characters.' });
+        showToast('Global backup password must be at least 8 characters.', 'error');
         return;
       }
       if (globalPassword && globalPassword !== globalPasswordConfirm) {
-        setMsg({ type: 'error', text: 'Global password confirmation does not match.' });
+        showToast('Global password confirmation does not match.', 'error');
         return;
       }
       if (config.destinationMode === 'saved' && !config.connectionId) {
-        setMsg({ type: 'error', text: 'Select an SMB destination connection.' });
+        showToast('Select an SMB destination connection.', 'error');
         return;
       }
       if (config.destinationMode === 'adhoc' && (!adhoc.host || !adhoc.share)) {
-        setMsg({ type: 'error', text: 'Ad-hoc SMB host and share are required.' });
+        showToast('Ad-hoc SMB host and share are required.', 'error');
         return;
       }
 
@@ -471,11 +461,11 @@ function AutoBackupTab() {
       });
       const d = await res.json() as { error?: string };
       if (!res.ok) {
-        setMsg({ type: 'error', text: d.error || 'Failed to save auto-backup config.' });
+        showToast(d.error || 'Failed to save auto-backup config.', 'error');
         return;
       }
 
-      setMsg({ type: 'success', text: 'Auto-backup configuration saved.' });
+      showToast('Auto-backup configuration saved.', 'success');
       setGlobalPassword('');
       setGlobalPasswordConfirm('');
       setAdhoc((p) => ({ ...p, password: '' }));
@@ -483,7 +473,7 @@ function AutoBackupTab() {
       setAdhocHasPassword(true);
       await load();
     } catch {
-      setMsg({ type: 'error', text: 'Network error while saving configuration.' });
+      showToast('Network error while saving configuration.', 'error');
     } finally {
       setSaving(false);
     }
@@ -491,7 +481,6 @@ function AutoBackupTab() {
 
   async function testDestination() {
     setTesting(true);
-    setMsg(null);
     try {
       const res = await fetch('/api/v1/backup/auto/test', {
         method: 'POST',
@@ -509,14 +498,14 @@ function AutoBackupTab() {
       });
       const d = await res.json() as { error?: string };
       if (!res.ok) {
-        setMsg({ type: 'error', text: d.error || 'Destination test failed.' });
+        showToast(d.error || 'Destination test failed.', 'error');
         return;
       }
-      setMsg({ type: 'success', text: 'Destination test passed.' });
+      showToast('Destination test passed.', 'success');
       setAdhoc((p) => ({ ...p, password: '' }));
       setAdhocHasPassword(true);
     } catch {
-      setMsg({ type: 'error', text: 'Network error while testing destination.' });
+      showToast('Network error while testing destination.', 'error');
     } finally {
       setTesting(false);
     }
@@ -524,7 +513,6 @@ function AutoBackupTab() {
 
   async function runNow() {
     setRunningNow(true);
-    setMsg(null);
     try {
       const res = await fetch('/api/v1/backup/auto/run-now', {
         method: 'POST',
@@ -532,13 +520,13 @@ function AutoBackupTab() {
       });
       const d = await res.json() as { error?: string };
       if (!res.ok) {
-        setMsg({ type: 'error', text: d.error || 'Run now failed.' });
+        showToast(d.error || 'Run now failed.', 'error');
         return;
       }
-      setMsg({ type: 'success', text: 'Auto-backup run completed.' });
+      showToast('Auto-backup run completed.', 'success');
       await load();
     } catch {
-      setMsg({ type: 'error', text: 'Network error while running backup.' });
+      showToast('Network error while running backup.', 'error');
     } finally {
       setRunningNow(false);
     }
@@ -694,8 +682,6 @@ function AutoBackupTab() {
                   </div>
                 </>
               )}
-
-              {msg && <p className={`text-sm ${msg.type === 'success' ? 'text-green-500' : 'text-red-500'}`}>{msg.text}</p>}
             </>
           )}
         </section>

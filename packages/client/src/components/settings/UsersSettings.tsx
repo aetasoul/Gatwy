@@ -3,6 +3,7 @@ import type React from 'react';
 import { useAuth } from '../../hooks/useAuth';
 import { useTimezone } from '../../hooks/useTimezone';
 import { formatDate } from '../../utils/formatDate';
+import { showToast } from '../../hooks/useToast';
 
 const AVATAR_COLORS = [
   'bg-blue-500', 'bg-purple-500', 'bg-green-500', 'bg-yellow-500',
@@ -62,11 +63,7 @@ export function UsersSettings() {
   const [createEmail, setCreateEmail] = useState('');
   const [createPassword, setCreatePassword] = useState('');
   const [createRole, setCreateRole] = useState('user');
-  const [createMsg, setCreateMsg] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
   const [creating, setCreating] = useState(false);
-
-  // Per-row messages
-  const [rowMsgs, setRowMsgs] = useState<Record<string, { type: 'success' | 'error'; text: string }>>({});
 
   // Delete confirmation modal state
   const [deleteTarget, setDeleteTarget] = useState<{ id: string; username: string } | null>(null);
@@ -77,7 +74,6 @@ export function UsersSettings() {
   const [editDisplayName, setEditDisplayName] = useState('');
   const [editEmail, setEditEmail] = useState('');
   const [editRole, setEditRole] = useState('user');
-  const [editMsg, setEditMsg] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
   const [saving, setSaving] = useState(false);
 
   function openEdit(u: UserRow) {
@@ -85,19 +81,16 @@ export function UsersSettings() {
     setEditDisplayName(u.displayName);
     setEditEmail(u.email ?? '');
     setEditRole(u.role);
-    setEditMsg(null);
   }
 
   function closeEdit() {
     setEditUser(null);
-    setEditMsg(null);
   }
 
   async function handleEditSave(e: React.FormEvent) {
     e.preventDefault();
     if (!editUser) return;
     setSaving(true);
-    setEditMsg(null);
     try {
       const res = await fetch(`/api/v1/users/${editUser.id}`, {
         method: 'PUT',
@@ -114,13 +107,13 @@ export function UsersSettings() {
         setUsers((prev) => prev.map((u) => u.id === editUser.id
           ? { ...u, displayName: editDisplayName.trim(), email: editEmail.trim() || null, role: editRole }
           : u));
-        setEditMsg({ type: 'success', text: 'Saved.' });
+        showToast('Saved.', 'success');
         setTimeout(closeEdit, 900);
       } else {
-        setEditMsg({ type: 'error', text: d.error || 'Failed to save.' });
+        showToast(d.error || 'Failed to save.', 'error');
       }
     } catch {
-      setEditMsg({ type: 'error', text: 'Network error.' });
+      showToast('Network error.', 'error');
     } finally {
       setSaving(false);
     }
@@ -129,13 +122,11 @@ export function UsersSettings() {
   // Reset password state
   const [resetPasswordUserId, setResetPasswordUserId] = useState<string | null>(null);
   const [resetPasswordValue, setResetPasswordValue] = useState('');
-  const [resetPasswordMsg, setResetPasswordMsg] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
   const [resettingPassword, setResettingPassword] = useState(false);
 
   // Passkey reset state
   const [passkeyResetUserId, setPasskeyResetUserId] = useState<string | null>(null);
   const [passkeyResetReason, setPasskeyResetReason] = useState('');
-  const [passkeyResetMsg, setPasskeyResetMsg] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
   const [resettingPasskeys, setResettingPasskeys] = useState(false);
 
   async function loadUsers() {
@@ -166,11 +157,6 @@ export function UsersSettings() {
       .catch(() => {});
   }, []);
 
-  function setRowMsg(id: string, msg: { type: 'success' | 'error'; text: string }) {
-    setRowMsgs((prev) => ({ ...prev, [id]: msg }));
-    setTimeout(() => setRowMsgs((prev) => { const n = { ...prev }; delete n[id]; return n; }), 3000);
-  }
-
   async function handleRoleChange(userId: string, newRole: string) {
     const res = await fetch(`/api/v1/users/${userId}`, {
       method: 'PUT',
@@ -180,10 +166,10 @@ export function UsersSettings() {
     });
     if (res.ok) {
       setUsers((prev) => prev.map((u) => u.id === userId ? { ...u, role: newRole } : u));
-      setRowMsg(userId, { type: 'success', text: 'Role updated.' });
+      showToast('Role updated.', 'success');
     } else {
       const d = await res.json();
-      setRowMsg(userId, { type: 'error', text: d.error || 'Failed.' });
+      showToast(d.error || 'Failed.', 'error');
     }
   }
 
@@ -194,10 +180,10 @@ export function UsersSettings() {
     });
     if (res.ok) {
       setUsers((prev) => prev.map((u) => u.id === userId ? { ...u, lockedUntil: null, failedLoginCount: 0 } : u));
-      setRowMsg(userId, { type: 'success', text: 'User unlocked.' });
+      showToast('User unlocked.', 'success');
     } else {
       const d = await res.json();
-      setRowMsg(userId, { type: 'error', text: d.error || 'Failed.' });
+      showToast(d.error || 'Failed.', 'error');
     }
   }
 
@@ -215,11 +201,11 @@ export function UsersSettings() {
         setDeleteTarget(null);
       } else {
         const d = await res.json();
-        setRowMsg(userId, { type: 'error', text: d.error || 'Failed.' });
+        showToast(d.error || 'Failed.', 'error');
         setDeleteTarget(null);
       }
     } catch {
-      setRowMsg(userId, { type: 'error', text: 'Network error.' });
+      showToast('Network error.', 'error');
       setDeleteTarget(null);
     } finally {
       setDeleting(false);
@@ -229,7 +215,6 @@ export function UsersSettings() {
   async function handleResetPassword(userId: string) {
     if (!resetPasswordValue) return;
     setResettingPassword(true);
-    setResetPasswordMsg(null);
     try {
       const res = await fetch(`/api/v1/users/${userId}/reset-password`, {
         method: 'POST',
@@ -239,13 +224,13 @@ export function UsersSettings() {
       });
       const d = await res.json();
       if (res.ok) {
-        setResetPasswordMsg({ type: 'success', text: 'Password reset.' });
-        setTimeout(() => { setResetPasswordUserId(null); setResetPasswordValue(''); setResetPasswordMsg(null); }, 1500);
+        showToast('Password reset.', 'success');
+        setTimeout(() => { setResetPasswordUserId(null); setResetPasswordValue(''); }, 1500);
       } else {
-        setResetPasswordMsg({ type: 'error', text: d.error || 'Failed.' });
+        showToast(d.error || 'Failed.', 'error');
       }
     } catch {
-      setResetPasswordMsg({ type: 'error', text: 'Network error.' });
+      showToast('Network error.', 'error');
     } finally {
       setResettingPassword(false);
     }
@@ -253,11 +238,10 @@ export function UsersSettings() {
 
   async function handleResetPasskeys(userId: string) {
     if (!passkeyResetReason || passkeyResetReason.trim().length < 5) {
-      setPasskeyResetMsg({ type: 'error', text: 'Reason must be at least 5 characters.' });
+      showToast('Reason must be at least 5 characters.', 'error');
       return;
     }
     setResettingPasskeys(true);
-    setPasskeyResetMsg(null);
     try {
       const res = await fetch(`/api/v1/users/${userId}/passkeys/reset`, {
         method: 'POST',
@@ -267,14 +251,14 @@ export function UsersSettings() {
       });
       const d = await res.json() as { success?: boolean; passkeysDisabled?: number; error?: string };
       if (res.ok) {
-        setPasskeyResetMsg({ type: 'success', text: `${d.passkeysDisabled || 0} passkey(s) disabled.` });
+        showToast(`${d.passkeysDisabled || 0} passkey(s) disabled.`, 'success');
         setUsers((prev) => prev.map((u) => u.id === userId ? { ...u, passkeyCount: 0, mfaMethod: null, mfaEnabled: false } : u));
-        setTimeout(() => { setPasskeyResetUserId(null); setPasskeyResetReason(''); setPasskeyResetMsg(null); }, 1500);
+        setTimeout(() => { setPasskeyResetUserId(null); setPasskeyResetReason(''); }, 1500);
       } else {
-        setPasskeyResetMsg({ type: 'error', text: d.error || 'Failed.' });
+        showToast(d.error || 'Failed.', 'error');
       }
     } catch {
-      setPasskeyResetMsg({ type: 'error', text: 'Network error.' });
+      showToast('Network error.', 'error');
     } finally {
       setResettingPasskeys(false);
     }
@@ -283,7 +267,6 @@ export function UsersSettings() {
   async function handleCreateUser(e: FormEvent) {
     e.preventDefault();
     setCreating(true);
-    setCreateMsg(null);
     try {
       const res = await fetch('/api/v1/users', {
         method: 'POST',
@@ -300,7 +283,7 @@ export function UsersSettings() {
       if (res.ok) {
         const d = await res.json();
         setUsers((prev) => [...prev, d]);
-        setCreateMsg({ type: 'success', text: 'User created.' });
+        showToast('User created.', 'success');
         setCreateUsername('');
         setCreateDisplayName('');
         setCreateEmail('');
@@ -309,10 +292,10 @@ export function UsersSettings() {
         setShowCreate(false);
       } else {
         const d = await res.json();
-        setCreateMsg({ type: 'error', text: d.error || 'Failed to create user.' });
+        showToast(d.error || 'Failed to create user.', 'error');
       }
     } catch {
-      setCreateMsg({ type: 'error', text: 'Network error.' });
+      showToast('Network error.', 'error');
     } finally {
       setCreating(false);
     }
@@ -369,7 +352,6 @@ export function UsersSettings() {
               </select>
             </div>
           </div>
-          {createMsg && <p className={`text-sm ${createMsg.type === 'success' ? 'text-green-500' : 'text-red-500'}`}>{createMsg.text}</p>}
           <button type="submit" disabled={creating}
             className="px-4 py-2 bg-accent text-white rounded hover:bg-accent-hover disabled:opacity-50 text-sm font-medium">
             {creating ? 'Creating...' : 'Create User'}
@@ -394,7 +376,6 @@ export function UsersSettings() {
             {users.map((u) => {
               const locked = isLocked(u);
               const isSelf = u.id === currentUser?.id;
-              const rowMsg = rowMsgs[u.id];
               return (
                 <tr key={u.id} className="border-b border-border last:border-b-0">
                   <td className="py-3 pr-4">
@@ -438,11 +419,6 @@ export function UsersSettings() {
                   <td className="py-3 pr-4 text-text-secondary text-xs">{formatDate(u.lastLoginAt, timezone)}</td>
                   <td className="py-3">
                     <div className="flex items-center gap-2 flex-wrap">
-                      {rowMsg && (
-                        <span className={`text-xs ${rowMsg.type === 'success' ? 'text-green-500' : 'text-red-500'}`}>
-                          {rowMsg.text}
-                        </span>
-                      )}
                       {locked && (
                         <button
                           onClick={() => handleUnlock(u.id)}
@@ -469,16 +445,11 @@ export function UsersSettings() {
                             {resettingPassword ? '...' : '✓'}
                           </button>
                           <button
-                            onClick={() => { setResetPasswordUserId(null); setResetPasswordValue(''); setResetPasswordMsg(null); }}
+                            onClick={() => { setResetPasswordUserId(null); setResetPasswordValue(''); }}
                             className="px-2 py-1 text-xs border border-border rounded text-text-secondary hover:bg-surface-hover"
                           >
                             ✕
                           </button>
-                          {resetPasswordMsg && (
-                            <span className={`text-xs ${resetPasswordMsg.type === 'success' ? 'text-green-500' : 'text-red-500'}`}>
-                              {resetPasswordMsg.text}
-                            </span>
-                          )}
                         </div>
                       ) : (
                         <button
@@ -501,7 +472,7 @@ export function UsersSettings() {
                       </button>
                       {u.passkeyCount > 0 && passkeyResetUserId !== u.id && (
                         <button
-                          onClick={() => { setPasskeyResetUserId(u.id); setPasskeyResetReason(''); setPasskeyResetMsg(null); }}
+                          onClick={() => { setPasskeyResetUserId(u.id); setPasskeyResetReason(''); }}
                           className="px-2 py-1 text-xs border border-yellow-500/30 rounded text-yellow-400 hover:bg-yellow-500/10"
                           title="Reset passkeys"
                         >
@@ -526,16 +497,11 @@ export function UsersSettings() {
                             {resettingPasskeys ? '...' : '✓'}
                           </button>
                           <button
-                            onClick={() => { setPasskeyResetUserId(null); setPasskeyResetReason(''); setPasskeyResetMsg(null); }}
+                            onClick={() => { setPasskeyResetUserId(null); setPasskeyResetReason(''); }}
                             className="px-2 py-1 text-xs border border-border rounded text-text-secondary hover:bg-surface-hover"
                           >
                             ✕
                           </button>
-                          {passkeyResetMsg && (
-                            <span className={`text-xs ${passkeyResetMsg.type === 'success' ? 'text-green-500' : 'text-red-500'}`}>
-                              {passkeyResetMsg.text}
-                            </span>
-                          )}
                         </div>
                       )}
                       <button
@@ -644,12 +610,6 @@ export function UsersSettings() {
                   <p className="text-xs text-text-secondary mt-1">You cannot change your own role.</p>
                 )}
               </div>
-
-              {editMsg && (
-                <p className={`text-sm ${editMsg.type === 'success' ? 'text-green-500' : 'text-red-500'}`}>
-                  {editMsg.text}
-                </p>
-              )}
 
               <div className="flex gap-2 pt-1">
                 <button

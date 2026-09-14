@@ -1,4 +1,5 @@
 import { useEffect, useState, type FormEvent } from 'react';
+import { showToast } from '../../hooks/useToast';
 import { SSH_THEMES, THEME_NAMES, DEFAULT_THEME, type SshThemeName } from '../../lib/sshThemes';
 
 const FONT_FAMILIES = [
@@ -184,7 +185,6 @@ export function SshPrefsSettings() {
   const [cursorBlink, setCursorBlink] = useState(true);
   const [theme, setTheme] = useState<SshThemeName>(DEFAULT_THEME);
   const [scrollback, setScrollback] = useState('5000');
-  const [msg, setMsg] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
@@ -204,7 +204,6 @@ export function SshPrefsSettings() {
   async function handleSave(e: FormEvent) {
     e.preventDefault();
     setSaving(true);
-    setMsg(null);
     try {
       const res = await fetch('/api/v1/profile/ssh-prefs', {
         method: 'PUT',
@@ -220,13 +219,13 @@ export function SshPrefsSettings() {
         }),
       });
       if (res.ok) {
-        setMsg({ type: 'success', text: 'Saved. New SSH sessions will use these settings.' });
+        showToast('Saved. New SSH sessions will use these settings.', 'success');
       } else {
         const d = await res.json() as { error?: string };
-        setMsg({ type: 'error', text: d.error || 'Failed to save.' });
+        showToast(d.error || 'Failed to save.', 'error');
       }
     } catch {
-      setMsg({ type: 'error', text: 'Network error.' });
+      showToast('Network error.', 'error');
     } finally {
       setSaving(false);
     }
@@ -313,11 +312,6 @@ export function SshPrefsSettings() {
           </section>
 
           <div>
-            {msg && (
-              <p className={`text-sm mb-2 ${msg.type === 'success' ? 'text-green-500' : 'text-red-500'}`}>
-                {msg.text}
-              </p>
-            )}
             <button
               type="submit"
               disabled={saving}
@@ -330,7 +324,6 @@ export function SshPrefsSettings() {
               disabled={saving}
               onClick={async () => {
                 setSaving(true);
-                setMsg(null);
                 try {
                   await fetch('/api/v1/profile/ssh-prefs', {
                     method: 'DELETE',
@@ -349,9 +342,9 @@ export function SshPrefsSettings() {
                     setTheme((d.theme as SshThemeName) ?? DEFAULT_THEME);
                     setScrollback(String(d.scrollback ?? '5000'));
                   }
-                  setMsg({ type: 'success', text: 'Reset to global defaults.' });
+                  showToast('Reset to global defaults.', 'success');
                 } catch {
-                  setMsg({ type: 'error', text: 'Network error.' });
+                  showToast('Network error.', 'error');
                 } finally {
                   setSaving(false);
                 }

@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { useAuth } from '../../hooks/useAuth.js';
 import { invalidateSettings } from '../../hooks/useSettings.js';
+import { showToast } from '../../hooks/useToast';
 
 interface AuthSettings {
   'auth.local_enabled': string;
@@ -58,8 +59,6 @@ export function AuthProvidersSettings() {
   const [ldapPassword, setLdapPassword] = useState('');
   const [oidcSecret, setOidcSecret] = useState('');
   const [saving, setSaving] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [success, setSuccess] = useState(false);
   const [loading, setLoading] = useState(true);
   const [testingLdap, setTestingLdap] = useState(false);
   const [ldapTestResult, setLdapTestResult] = useState<string | null>(null);
@@ -89,8 +88,6 @@ export function AuthProvidersSettings() {
 
   const handleSave = async () => {
     setSaving(true);
-    setError(null);
-    setSuccess(false);
 
     const updates: Record<string, string> = { ...settings };
     updates['auth.ldap_bind_password'] = ldapPassword || '__unchanged__';
@@ -105,16 +102,15 @@ export function AuthProvidersSettings() {
       });
       if (!res.ok) {
         const d = await res.json() as { error: string };
-        setError(d.error || 'Save failed');
+        showToast(d.error || 'Save failed', 'error');
       } else {
-        setSuccess(true);
+        showToast('Settings saved successfully.', 'success');
         setLdapPassword('');
         setOidcSecret('');
         invalidateSettings();
-        setTimeout(() => setSuccess(false), 3000);
       }
     } catch {
-      setError('Network error');
+      showToast('Network error', 'error');
     } finally {
       setSaving(false);
     }
@@ -332,12 +328,6 @@ export function AuthProvidersSettings() {
       </section>
 
       {/* Save */}
-      {error && (
-        <div className="p-3 bg-red-500/10 border border-red-500/30 rounded-lg text-sm text-red-600 dark:text-red-400">{error}</div>
-      )}
-      {success && (
-        <div className="p-3 bg-green-500/10 border border-green-500/30 rounded-lg text-sm text-green-600 dark:text-green-400">Settings saved successfully.</div>
-      )}
       <button
         onClick={handleSave}
         disabled={saving}

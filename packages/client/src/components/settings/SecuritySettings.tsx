@@ -1,5 +1,6 @@
 import { useEffect, useState, type FormEvent } from 'react';
 import { useSettings, invalidateSettings } from '../../hooks/useSettings';
+import { showToast } from '../../hooks/useToast';
 
 interface IpRule {
   id: string;
@@ -31,13 +32,11 @@ export function SecuritySettings() {
   // Session timeout state
   const [idleTimeout, setIdleTimeout] = useState('0');
   const [maxSessionMinutes, setMaxSessionMinutes] = useState('0');
-  const [sessionMsg, setSessionMsg] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
   const [savingSession, setSavingSession] = useState(false);
 
   // Login lockout state
   const [maxFailed, setMaxFailed] = useState('5');
   const [lockoutMinutes, setLockoutMinutes] = useState('30');
-  const [lockoutMsg, setLockoutMsg] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
   const [savingLockout, setSavingLockout] = useState(false);
 
   // IP rules state
@@ -47,26 +46,22 @@ export function SecuritySettings() {
   const [newRuleCidr, setNewRuleCidr] = useState('');
   const [newRuleType, setNewRuleType] = useState<'allow' | 'deny'>('allow');
   const [newRuleDesc, setNewRuleDesc] = useState('');
-  const [ipMsg, setIpMsg] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
   const [savingIp, setSavingIp] = useState(false);
   const [currentIp, setCurrentIp] = useState<string>('');
   const [ipBlockWarning, setIpBlockWarning] = useState<string | null>(null);
 
   // Connection limits
   const [maxConnPerUser, setMaxConnPerUser] = useState('10');
-  const [connMsg, setConnMsg] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
   const [savingConn, setSavingConn] = useState(false);
 
   // Trusted proxies
   const [trustedProxies, setTrustedProxies] = useState('');
   const [proxyDetectionEnabled, setProxyDetectionEnabled] = useState(true);
-  const [proxyMsg, setProxyMsg] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
   const [savingProxy, setSavingProxy] = useState(false);
 
   // Passkey settings
   const [passkeyEnabled, setPasskeyEnabled] = useState(true);
   const [passkeyInactiveDays, setPasskeyInactiveDays] = useState('90');
-  const [passkeyMsg, setPasskeyMsg] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
   const [savingPasskey, setSavingPasskey] = useState(false);
 
   useEffect(() => {
@@ -117,18 +112,17 @@ export function SecuritySettings() {
   async function handleSessionSave(e: FormEvent) {
     e.preventDefault();
     setSavingSession(true);
-    setSessionMsg(null);
     try {
       await saveSetting(
         {
           'security.idle_timeout_minutes': idleTimeout,
           'security.max_session_minutes': maxSessionMinutes,
         },
-        () => setSessionMsg({ type: 'success', text: 'Saved.' }),
-        (msg) => setSessionMsg({ type: 'error', text: msg }),
+        () => showToast('Saved.', 'success'),
+        (msg) => showToast(msg, 'error'),
       );
     } catch {
-      setSessionMsg({ type: 'error', text: 'Network error.' });
+      showToast('Network error.', 'error');
     } finally {
       setSavingSession(false);
     }
@@ -137,18 +131,17 @@ export function SecuritySettings() {
   async function handleLockoutSave(e: FormEvent) {
     e.preventDefault();
     setSavingLockout(true);
-    setLockoutMsg(null);
     try {
       await saveSetting(
         {
           'security.max_failed_logins': maxFailed,
           'security.lockout_minutes': lockoutMinutes,
         },
-        () => setLockoutMsg({ type: 'success', text: 'Saved.' }),
-        (msg) => setLockoutMsg({ type: 'error', text: msg }),
+        () => showToast('Saved.', 'success'),
+        (msg) => showToast(msg, 'error'),
       );
     } catch {
-      setLockoutMsg({ type: 'error', text: 'Network error.' });
+      showToast('Network error.', 'error');
     } finally {
       setSavingLockout(false);
     }
@@ -195,18 +188,17 @@ export function SecuritySettings() {
     if (res.ok) {
       await refresh();
       invalidateSettings();
-      setIpMsg({ type: 'success', text: 'IP rules saved.' });
+      showToast('IP rules saved.', 'success');
       return;
     }
 
     const d = await res.json();
-    setIpMsg({ type: 'error', text: d.error || 'Failed to save.' });
+    showToast(d.error || 'Failed to save.', 'error');
   }
 
   async function handleIpSave(e: FormEvent) {
     e.preventDefault();
     setSavingIp(true);
-    setIpMsg(null);
     setIpBlockWarning(null);
     try {
       if (wouldCurrentIpBeBlocked()) {
@@ -216,7 +208,7 @@ export function SecuritySettings() {
 
       await persistIpRules();
     } catch {
-      setIpMsg({ type: 'error', text: 'Network error.' });
+      showToast('Network error.', 'error');
     } finally {
       setSavingIp(false);
     }
@@ -225,15 +217,14 @@ export function SecuritySettings() {
   async function handleConnSave(e: FormEvent) {
     e.preventDefault();
     setSavingConn(true);
-    setConnMsg(null);
     try {
       await saveSetting(
         { 'security.max_connections_per_user': maxConnPerUser },
-        () => setConnMsg({ type: 'success', text: 'Saved.' }),
-        (msg) => setConnMsg({ type: 'error', text: msg }),
+        () => showToast('Saved.', 'success'),
+        (msg) => showToast(msg, 'error'),
       );
     } catch {
-      setConnMsg({ type: 'error', text: 'Network error.' });
+      showToast('Network error.', 'error');
     } finally {
       setSavingConn(false);
     }
@@ -242,18 +233,17 @@ export function SecuritySettings() {
   async function handleProxySave(e: FormEvent) {
     e.preventDefault();
     setSavingProxy(true);
-    setProxyMsg(null);
     try {
       await saveSetting(
         {
           'security.trusted_proxies': trustedProxies,
           'security.proxy_detection_enabled': String(proxyDetectionEnabled),
         },
-        () => setProxyMsg({ type: 'success', text: 'Saved.' }),
-        (msg) => setProxyMsg({ type: 'error', text: msg }),
+        () => showToast('Saved.', 'success'),
+        (msg) => showToast(msg, 'error'),
       );
     } catch {
-      setProxyMsg({ type: 'error', text: 'Network error.' });
+      showToast('Network error.', 'error');
     } finally {
       setSavingProxy(false);
     }
@@ -262,18 +252,17 @@ export function SecuritySettings() {
   async function handlePasskeySave(e: FormEvent) {
     e.preventDefault();
     setSavingPasskey(true);
-    setPasskeyMsg(null);
     try {
       await saveSetting(
         {
           'security.passkey_enabled': String(passkeyEnabled),
           'security.passkey_inactive_days': passkeyInactiveDays,
         },
-        () => setPasskeyMsg({ type: 'success', text: 'Saved.' }),
-        (msg) => setPasskeyMsg({ type: 'error', text: msg }),
+        () => showToast('Saved.', 'success'),
+        (msg) => showToast(msg, 'error'),
       );
     } catch {
-      setPasskeyMsg({ type: 'error', text: 'Network error.' });
+      showToast('Network error.', 'error');
     } finally {
       setSavingPasskey(false);
     }
@@ -312,11 +301,6 @@ export function SecuritySettings() {
               className="w-40 px-3 py-2 bg-surface border border-border rounded text-text-primary focus:outline-none focus:ring-2 focus:ring-accent text-sm"
             />
           </div>
-          {sessionMsg && (
-            <p className={`text-sm ${sessionMsg.type === 'success' ? 'text-green-500' : 'text-red-500'}`}>
-              {sessionMsg.text}
-            </p>
-          )}
           <button
             type="submit"
             disabled={savingSession}
@@ -370,11 +354,6 @@ export function SecuritySettings() {
               />
             </div>
           )}
-          {passkeyMsg && (
-            <p className={`text-sm ${passkeyMsg.type === 'success' ? 'text-green-500' : 'text-red-500'}`}>
-              {passkeyMsg.text}
-            </p>
-          )}
           <button
             type="submit"
             disabled={savingPasskey}
@@ -416,11 +395,6 @@ export function SecuritySettings() {
               className="w-40 px-3 py-2 bg-surface border border-border rounded text-text-primary focus:outline-none focus:ring-2 focus:ring-accent text-sm"
             />
           </div>
-          {lockoutMsg && (
-            <p className={`text-sm ${lockoutMsg.type === 'success' ? 'text-green-500' : 'text-red-500'}`}>
-              {lockoutMsg.text}
-            </p>
-          )}
           <button
             type="submit"
             disabled={savingLockout}
@@ -535,11 +509,6 @@ export function SecuritySettings() {
             </button>
           </div>
 
-          {ipMsg && (
-            <p className={`text-sm ${ipMsg.type === 'success' ? 'text-green-500' : 'text-red-500'}`}>
-              {ipMsg.text}
-            </p>
-          )}
           {ipBlockWarning && (
             <div className="rounded border border-yellow-500/40 bg-yellow-500/10 p-3 text-sm text-yellow-300 space-y-2">
               <p>{ipBlockWarning}</p>
@@ -549,12 +518,11 @@ export function SecuritySettings() {
                   type="button"
                   onClick={async () => {
                     setSavingIp(true);
-                    setIpMsg(null);
                     try {
                       await persistIpRules();
                       setIpBlockWarning(null);
                     } catch {
-                      setIpMsg({ type: 'error', text: 'Network error.' });
+                      showToast('Network error.', 'error');
                     } finally {
                       setSavingIp(false);
                     }
@@ -618,11 +586,6 @@ export function SecuritySettings() {
               </span>
             </div>
           )}
-          {connMsg && (
-            <p className={`text-sm ${connMsg.type === 'success' ? 'text-green-500' : 'text-red-500'}`}>
-              {connMsg.text}
-            </p>
-          )}
           <button
             type="submit"
             disabled={savingConn}
@@ -668,11 +631,6 @@ export function SecuritySettings() {
               <p className="text-xs text-text-secondary">When enabled, users are notified at login if their connection arrives via an untrusted proxy.</p>
             </div>
           </div>
-          {proxyMsg && (
-            <p className={`text-sm ${proxyMsg.type === 'success' ? 'text-green-500' : 'text-red-500'}`}>
-              {proxyMsg.text}
-            </p>
-          )}
           <button
             type="submit"
             disabled={savingProxy}

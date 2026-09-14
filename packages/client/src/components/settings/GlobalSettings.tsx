@@ -1,6 +1,7 @@
 import { useEffect, useState, type FormEvent } from 'react';
 import type React from 'react';
 import { useSettings, invalidateSettings } from '../../hooks/useSettings';
+import { showToast } from '../../hooks/useToast';
 
 type Tab = 'general' | 'version-check' | 'recordings';
 
@@ -55,7 +56,6 @@ export function GlobalSettings() {
   const [timezone, setTimezone] = useState('UTC');
   const [healthMonitorEnabled, setHealthMonitorEnabled] = useState(true);
   const [autoCloseDisconnected, setAutoCloseDisconnected] = useState(true);
-  const [generalMsg, setGeneralMsg] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
   const [savingGeneral, setSavingGeneral] = useState(false);
 
   // Logo
@@ -67,14 +67,12 @@ export function GlobalSettings() {
   const [retentionDaysEnabled, setRetentionDaysEnabled] = useState(true);
   const [retentionSizeEnabled, setRetentionSizeEnabled] = useState(false);
   const [retentionMaxSizeGb, setRetentionMaxSizeGb] = useState('10');
-  const [recordingMsg, setRecordingMsg] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
   const [savingRecording, setSavingRecording] = useState(false);
 
   // Version check preferences
   const [versionAuditLog, setVersionAuditLog] = useState(true);
   const [versionToast, setVersionToast] = useState(true);
   const [versionNotify, setVersionNotify] = useState(false);
-  const [versionMsg, setVersionMsg] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
   const [savingVersion, setSavingVersion] = useState(false);
 
   // Audit retention (shown in General tab)
@@ -83,7 +81,6 @@ export function GlobalSettings() {
   // Purge session history
   const [showPurgeConfirm, setShowPurgeConfirm] = useState(false);
   const [purging, setPurging] = useState(false);
-  const [purgeMsg, setPurgeMsg] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
 
   // Recording storage
   const [storageBytes, setStorageBytes] = useState<number | null>(null);
@@ -132,7 +129,6 @@ export function GlobalSettings() {
   async function handleGeneralSave(e: FormEvent) {
     e.preventDefault();
     setSavingGeneral(true);
-    setGeneralMsg(null);
     try {
       const result = await saveSettings({
         'app.name': appName,
@@ -142,9 +138,9 @@ export function GlobalSettings() {
         'health_monitor.enabled': String(healthMonitorEnabled),
         'session.auto_close_disconnected_enabled': String(autoCloseDisconnected),
       });
-      setGeneralMsg(result.ok ? { type: 'success', text: 'Saved.' } : { type: 'error', text: result.error! });
+      showToast(result.ok ? 'Saved.' : result.error!, result.ok ? 'success' : 'error');
     } catch {
-      setGeneralMsg({ type: 'error', text: 'Network error.' });
+      showToast('Network error.', 'error');
     } finally {
       setSavingGeneral(false);
     }
@@ -153,16 +149,15 @@ export function GlobalSettings() {
   async function handleVersionCheckSave(e: FormEvent) {
     e.preventDefault();
     setSavingVersion(true);
-    setVersionMsg(null);
     try {
       const result = await saveSettings({
         'version.audit_log_checks': String(versionAuditLog),
         'version.toast_feedback': String(versionToast),
         'version.notify_on_update': String(versionNotify),
       });
-      setVersionMsg(result.ok ? { type: 'success', text: 'Saved.' } : { type: 'error', text: result.error! });
+      showToast(result.ok ? 'Saved.' : result.error!, result.ok ? 'success' : 'error');
     } catch {
-      setVersionMsg({ type: 'error', text: 'Network error.' });
+      showToast('Network error.', 'error');
     } finally {
       setSavingVersion(false);
     }
@@ -179,7 +174,6 @@ export function GlobalSettings() {
 
   async function handlePurge() {
     setPurging(true);
-    setPurgeMsg(null);
     try {
       const res = await fetch('/api/v1/sessions', {
         method: 'DELETE',
@@ -188,14 +182,14 @@ export function GlobalSettings() {
       const d = await res.json() as { ok?: boolean; deletedSessions?: number; deletedRecordings?: number; deletedFileSessions?: number; error?: string };
       if (res.ok) {
         const fileNote = (d.deletedFileSessions ?? 0) > 0 ? ` and ${d.deletedFileSessions} file activity session(s)` : '';
-        setPurgeMsg({ type: 'success', text: `Deleted ${d.deletedSessions ?? 0} sessions and ${d.deletedRecordings ?? 0} recordings${fileNote}.` });
+        showToast(`Deleted ${d.deletedSessions ?? 0} sessions and ${d.deletedRecordings ?? 0} recordings${fileNote}.`, 'success');
         setShowPurgeConfirm(false);
         setStorageBytes(0);
       } else {
-        setPurgeMsg({ type: 'error', text: d.error || 'Failed to purge.' });
+        showToast(d.error || 'Failed to purge.', 'error');
       }
     } catch {
-      setPurgeMsg({ type: 'error', text: 'Network error.' });
+      showToast('Network error.', 'error');
     } finally {
       setPurging(false);
     }
@@ -204,7 +198,6 @@ export function GlobalSettings() {
   async function handleRecordingSave(e: FormEvent) {
     e.preventDefault();
     setSavingRecording(true);
-    setRecordingMsg(null);
     try {
       const result = await saveSettings({
         'session.recording_enabled': String(recordingEnabled),
@@ -213,9 +206,9 @@ export function GlobalSettings() {
         'session.recording_retention_size_enabled': String(retentionSizeEnabled),
         'session.recording_retention_max_size_gb': retentionMaxSizeGb,
       });
-      setRecordingMsg(result.ok ? { type: 'success', text: 'Saved.' } : { type: 'error', text: result.error! });
+      showToast(result.ok ? 'Saved.' : result.error!, result.ok ? 'success' : 'error');
     } catch {
-      setRecordingMsg({ type: 'error', text: 'Network error.' });
+      showToast('Network error.', 'error');
     } finally {
       setSavingRecording(false);
     }
@@ -311,11 +304,6 @@ export function GlobalSettings() {
             </div>
           </div>
 
-          {generalMsg && (
-            <p className={`text-sm ${generalMsg.type === 'success' ? 'text-green-500' : 'text-red-500'}`}>
-              {generalMsg.text}
-            </p>
-          )}
           <button
             type="submit"
             disabled={savingGeneral}
@@ -350,11 +338,6 @@ export function GlobalSettings() {
               <p className="text-xs text-text-secondary/60 mt-0.5">Emits a <code className="text-xs bg-surface px-1 rounded">system.update_available</code> event you can use in notification rules to send an alert via email, Telegram, Slack, etc.</p>
             </div>
           </div>
-          {versionMsg && (
-            <p className={`text-sm ${versionMsg.type === 'success' ? 'text-green-500' : 'text-red-500'}`}>
-              {versionMsg.text}
-            </p>
-          )}
           <button
             type="submit"
             disabled={savingVersion}
@@ -422,11 +405,6 @@ export function GlobalSettings() {
               ℹ️ Both retention policies are active — whichever limit is reached first will trigger cleanup (FIFO).
             </p>
           )}
-          {recordingMsg && (
-            <p className={`text-sm ${recordingMsg.type === 'success' ? 'text-green-500' : 'text-red-500'}`}>
-              {recordingMsg.text}
-            </p>
-          )}
           <button
             type="submit"
             disabled={savingRecording}
@@ -476,15 +454,12 @@ export function GlobalSettings() {
             </div>
             <button
               type="button"
-              onClick={() => { setShowPurgeConfirm(true); setPurgeMsg(null); }}
+              onClick={() => setShowPurgeConfirm(true)}
               className="shrink-0 px-3 py-1.5 border border-red-500/40 rounded text-sm text-red-400 hover:bg-red-500/10 font-medium"
             >
               Delete History
             </button>
           </div>
-          {purgeMsg && (
-            <p className={`text-sm ${purgeMsg.type === 'success' ? 'text-green-500' : 'text-red-500'}`}>{purgeMsg.text}</p>
-          )}
         </div>
 
         {/* Purge confirmation modal */}

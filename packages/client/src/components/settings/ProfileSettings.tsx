@@ -2,6 +2,7 @@ import { useEffect, useState, type FormEvent } from 'react';
 import { useAuth } from '../../hooks/useAuth';
 import { useTimezone } from '../../hooks/useTimezone';
 import { formatDate } from '../../utils/formatDate';
+import { showToast } from '../../hooks/useToast';
 import { startRegistration } from '@simplewebauthn/browser';
 
 const AVATAR_COLORS = [
@@ -102,14 +103,12 @@ export function ProfileSettings() {
   const [displayName, setDisplayName] = useState('');
   const [email, setEmail] = useState('');
   const [avatarText, setAvatarText] = useState('');
-  const [profileMsg, setProfileMsg] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
   const [saving, setSaving] = useState(false);
 
   const [showPwForm, setShowPwForm] = useState(false);
   const [currentPassword, setCurrentPassword] = useState('');
   const [newPassword, setNewPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
-  const [pwMsg, setPwMsg] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
   const [savingPw, setSavingPw] = useState(false);
 
   const [sessions, setSessions] = useState<LoginSession[]>([]);
@@ -121,7 +120,6 @@ export function ProfileSettings() {
   const [mfaVerifyCode, setMfaVerifyCode] = useState('');
   const [mfaDisableCode, setMfaDisableCode] = useState('');
   const [showMfaDisable, setShowMfaDisable] = useState(false);
-  const [mfaMsg, setMfaMsg] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
   const [mfaLoading, setMfaLoading] = useState(false);
 
   // Passkey state
@@ -129,7 +127,6 @@ export function ProfileSettings() {
   const [passkeyCanAdd, setPasskeyCanAdd] = useState(true);
   const [passkeyMaxCount, setPasskeyMaxCount] = useState(3);
   const [passkeyLoading, setPasskeyLoading] = useState(false);
-  const [passkeyMsg, setPasskeyMsg] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
   const [showPasskeyRegister, setShowPasskeyRegister] = useState(false);
   const [newPasskeyName, setNewPasskeyName] = useState('');
   const [editingPasskeyId, setEditingPasskeyId] = useState<string | null>(null);
@@ -208,7 +205,6 @@ export function ProfileSettings() {
   async function handleProfileSave(e: FormEvent) {
     e.preventDefault();
     setSaving(true);
-    setProfileMsg(null);
     try {
       const res = await fetch('/api/v1/profile', {
         method: 'PUT',
@@ -217,13 +213,13 @@ export function ProfileSettings() {
         body: JSON.stringify({ displayName, email: email || null, avatarText: avatarText || null }),
       });
       if (res.ok) {
-        setProfileMsg({ type: 'success', text: 'Profile updated successfully.' });
+        showToast('Profile updated successfully.', 'success');
       } else {
         const d = await res.json();
-        setProfileMsg({ type: 'error', text: d.error || 'Failed to update profile.' });
+        showToast(d.error || 'Failed to update profile.', 'error');
       }
     } catch {
-      setProfileMsg({ type: 'error', text: 'Network error.' });
+      showToast('Network error.', 'error');
     } finally {
       setSaving(false);
     }
@@ -232,15 +228,14 @@ export function ProfileSettings() {
   async function handlePasswordSave(e: FormEvent) {
     e.preventDefault();
     if (newPassword !== confirmPassword) {
-      setPwMsg({ type: 'error', text: 'Passwords do not match.' });
+      showToast('Passwords do not match.', 'error');
       return;
     }
     if (newPassword.length < 8) {
-      setPwMsg({ type: 'error', text: 'New password must be at least 8 characters.' });
+      showToast('New password must be at least 8 characters.', 'error');
       return;
     }
     setSavingPw(true);
-    setPwMsg(null);
     try {
       const res = await fetch('/api/v1/profile/password', {
         method: 'PUT',
@@ -249,18 +244,18 @@ export function ProfileSettings() {
         body: JSON.stringify({ currentPassword, newPassword }),
       });
       if (res.ok) {
-        setPwMsg({ type: 'success', text: 'Password changed successfully.' });
+        showToast('Password changed successfully.', 'success');
         setCurrentPassword('');
         setNewPassword('');
         setConfirmPassword('');
-        // Auto-close the form after a short delay so the user sees the success message
-        setTimeout(() => { setShowPwForm(false); setPwMsg(null); }, 1500);
+        // Auto-close the form after a short delay so the user sees the toast
+        setTimeout(() => { setShowPwForm(false); }, 1500);
       } else {
         const d = await res.json();
-        setPwMsg({ type: 'error', text: d.error || 'Failed to change password.' });
+        showToast(d.error || 'Failed to change password.', 'error');
       }
     } catch {
-      setPwMsg({ type: 'error', text: 'Network error.' });
+      showToast('Network error.', 'error');
     } finally {
       setSavingPw(false);
     }
@@ -280,7 +275,6 @@ export function ProfileSettings() {
 
   async function handleMfaSetup() {
     setMfaLoading(true);
-    setMfaMsg(null);
     try {
       const res = await fetch('/api/v1/profile/mfa/setup', {
         method: 'POST',
@@ -292,10 +286,10 @@ export function ProfileSettings() {
         setMfaVerifyCode('');
       } else {
         const d = await res.json() as { error?: string };
-        setMfaMsg({ type: 'error', text: d.error || 'Failed to start MFA setup.' });
+        showToast(d.error || 'Failed to start MFA setup.', 'error');
       }
     } catch {
-      setMfaMsg({ type: 'error', text: 'Network error.' });
+      showToast('Network error.', 'error');
     } finally {
       setMfaLoading(false);
     }
@@ -304,7 +298,6 @@ export function ProfileSettings() {
   async function handleMfaVerify(e: FormEvent) {
     e.preventDefault();
     setMfaLoading(true);
-    setMfaMsg(null);
     try {
       const res = await fetch('/api/v1/profile/mfa/verify', {
         method: 'POST',
@@ -317,13 +310,13 @@ export function ProfileSettings() {
         setMfaMethod('totp');
         setMfaSetupData(null);
         setMfaVerifyCode('');
-        setMfaMsg({ type: 'success', text: 'Two-factor authentication enabled.' });
+        showToast('Two-factor authentication enabled.', 'success');
       } else {
         const d = await res.json() as { error?: string };
-        setMfaMsg({ type: 'error', text: d.error || 'Invalid code.' });
+        showToast(d.error || 'Invalid code.', 'error');
       }
     } catch {
-      setMfaMsg({ type: 'error', text: 'Network error.' });
+      showToast('Network error.', 'error');
     } finally {
       setMfaLoading(false);
     }
@@ -332,7 +325,6 @@ export function ProfileSettings() {
   async function handleMfaDisable(e: FormEvent) {
     e.preventDefault();
     setMfaLoading(true);
-    setMfaMsg(null);
     try {
       const res = await fetch('/api/v1/profile/mfa/disable', {
         method: 'POST',
@@ -345,13 +337,13 @@ export function ProfileSettings() {
         setMfaMethod(null);
         setShowMfaDisable(false);
         setMfaDisableCode('');
-        setMfaMsg({ type: 'success', text: 'Two-factor authentication disabled.' });
+        showToast('Two-factor authentication disabled.', 'success');
       } else {
         const d = await res.json() as { error?: string };
-        setMfaMsg({ type: 'error', text: d.error || 'Invalid code.' });
+        showToast(d.error || 'Invalid code.', 'error');
       }
     } catch {
-      setMfaMsg({ type: 'error', text: 'Network error.' });
+      showToast('Network error.', 'error');
     } finally {
       setMfaLoading(false);
     }
@@ -372,11 +364,10 @@ export function ProfileSettings() {
   async function handlePasskeyRegister(e: FormEvent) {
     e.preventDefault();
     if (!newPasskeyName.trim()) {
-      setPasskeyMsg({ type: 'error', text: 'Please enter a name for your passkey.' });
+      showToast('Please enter a name for your passkey.', 'error');
       return;
     }
     setPasskeyLoading(true);
-    setPasskeyMsg(null);
 
     try {
       // Get registration options from server
@@ -409,7 +400,7 @@ export function ProfileSettings() {
         throw new Error(data.error || 'Failed to register passkey');
       }
 
-      setPasskeyMsg({ type: 'success', text: 'Passkey registered successfully!' });
+      showToast('Passkey registered successfully!', 'success');
       setShowPasskeyRegister(false);
       setNewPasskeyName('');
       await loadPasskeys();
@@ -417,12 +408,12 @@ export function ProfileSettings() {
     } catch (err: unknown) {
       if (err instanceof Error) {
         if (err.name === 'NotAllowedError') {
-          setPasskeyMsg({ type: 'error', text: 'Passkey registration was cancelled.' });
+          showToast('Passkey registration was cancelled.', 'error');
         } else {
-          setPasskeyMsg({ type: 'error', text: err.message });
+          showToast(err.message, 'error');
         }
       } else {
-        setPasskeyMsg({ type: 'error', text: 'Failed to register passkey.' });
+        showToast('Failed to register passkey.', 'error');
       }
     } finally {
       setPasskeyLoading(false);
@@ -432,7 +423,6 @@ export function ProfileSettings() {
   async function handlePasskeyRename(id: string) {
     if (!editingPasskeyName.trim()) return;
     setPasskeyLoading(true);
-    setPasskeyMsg(null);
 
     try {
       const res = await fetch(`/api/v1/profile/passkeys/${id}`, {
@@ -449,7 +439,7 @@ export function ProfileSettings() {
       setEditingPasskeyName('');
       await loadPasskeys();
     } catch (err: unknown) {
-      setPasskeyMsg({ type: 'error', text: err instanceof Error ? err.message : 'Failed to rename passkey' });
+      showToast(err instanceof Error ? err.message : 'Failed to rename passkey', 'error');
     } finally {
       setPasskeyLoading(false);
     }
@@ -457,7 +447,6 @@ export function ProfileSettings() {
 
   async function handlePasskeyRemove(id: string) {
     setPasskeyLoading(true);
-    setPasskeyMsg(null);
 
     try {
       const res = await fetch(`/api/v1/profile/passkeys/${id}`, {
@@ -468,12 +457,12 @@ export function ProfileSettings() {
         const data = await res.json() as { error?: string };
         throw new Error(data.error || 'Failed to remove passkey');
       }
-      setPasskeyMsg({ type: 'success', text: 'Passkey removed.' });
+      showToast('Passkey removed.', 'success');
       setPendingPasskeyRemoval(null);
       await loadPasskeys();
       await loadMfaStatus();
     } catch (err: unknown) {
-      setPasskeyMsg({ type: 'error', text: err instanceof Error ? err.message : 'Failed to remove passkey' });
+      showToast(err instanceof Error ? err.message : 'Failed to remove passkey', 'error');
     } finally {
       setPasskeyLoading(false);
     }
@@ -537,12 +526,6 @@ export function ProfileSettings() {
             />
           </div>
 
-          {profileMsg && (
-            <p className={`text-sm ${profileMsg.type === 'success' ? 'text-green-500' : 'text-red-500'}`}>
-              {profileMsg.text}
-            </p>
-          )}
-
           <button
             type="submit"
             disabled={saving}
@@ -567,7 +550,7 @@ export function ProfileSettings() {
           {!showPwForm && (
             <button
               type="button"
-              onClick={() => { setShowPwForm(true); setPwMsg(null); }}
+              onClick={() => { setShowPwForm(true); }}
               className="px-4 py-2 bg-surface-hover border border-border rounded text-sm text-text-primary hover:bg-surface font-medium"
             >
               Change Password
@@ -606,12 +589,6 @@ export function ProfileSettings() {
               />
             </div>
 
-            {pwMsg && (
-              <p className={`text-sm ${pwMsg.type === 'success' ? 'text-green-500' : 'text-red-500'}`}>
-                {pwMsg.text}
-              </p>
-            )}
-
             <div className="flex gap-2">
               <button
                 type="submit"
@@ -622,7 +599,7 @@ export function ProfileSettings() {
               </button>
               <button
                 type="button"
-                onClick={() => { setShowPwForm(false); setCurrentPassword(''); setNewPassword(''); setConfirmPassword(''); setPwMsg(null); }}
+                onClick={() => { setShowPwForm(false); setCurrentPassword(''); setNewPassword(''); setConfirmPassword(''); }}
                 className="px-4 py-2 border border-border rounded text-text-secondary hover:bg-surface-hover text-sm"
               >
                 Cancel
@@ -704,12 +681,6 @@ export function ProfileSettings() {
       <section>
         <h2 className="text-base font-semibold text-text-primary mb-4">Two-Factor Authentication</h2>
 
-        {mfaMsg && (
-          <p className={`text-sm mb-3 ${mfaMsg.type === 'success' ? 'text-green-500' : 'text-red-500'}`}>
-            {mfaMsg.text}
-          </p>
-        )}
-
         {mfaEnabled ? (
           <div className="space-y-3">
             <div className="flex items-center gap-2">
@@ -727,7 +698,7 @@ export function ProfileSettings() {
               <>
                 {!showMfaDisable ? (
                   <button
-                    onClick={() => { setShowMfaDisable(true); setMfaMsg(null); }}
+                    onClick={() => { setShowMfaDisable(true); }}
                     className="px-4 py-2 border border-red-500/40 text-red-400 rounded hover:bg-red-500/10 text-sm font-medium"
                   >
                     Disable Two-Factor Authentication
@@ -813,7 +784,7 @@ export function ProfileSettings() {
                     </button>
                     <button
                       type="button"
-                      onClick={() => { setMfaSetupData(null); setMfaVerifyCode(''); setMfaMsg(null); }}
+                      onClick={() => { setMfaSetupData(null); setMfaVerifyCode(''); }}
                       className="px-4 py-2 border border-border rounded text-text-secondary hover:bg-surface-hover text-sm"
                     >
                       Cancel
@@ -837,12 +808,6 @@ export function ProfileSettings() {
               Use passkeys (like Face ID, Touch ID, or Windows Hello) for passwordless two-factor authentication.
               {passkeyMaxCount > 0 && ` You can register up to ${passkeyMaxCount} passkeys.`}
             </p>
-
-            {passkeyMsg && (
-              <p className={`text-sm mb-3 ${passkeyMsg.type === 'success' ? 'text-green-500' : 'text-red-500'}`}>
-                {passkeyMsg.text}
-              </p>
-            )}
 
             {pendingPasskeyRemoval && (
               <div className="mb-4 p-3 rounded-lg border border-red-500/40 bg-red-500/5">
@@ -1016,7 +981,7 @@ export function ProfileSettings() {
                   </button>
                   <button
                     type="button"
-                    onClick={() => { setShowPasskeyRegister(false); setNewPasskeyName(''); setPasskeyMsg(null); }}
+                    onClick={() => { setShowPasskeyRegister(false); setNewPasskeyName(''); }}
                     className="px-4 py-2 border border-border rounded text-text-secondary hover:bg-surface-hover text-sm"
                   >
                     Cancel
@@ -1026,7 +991,7 @@ export function ProfileSettings() {
             ) : (
               passkeyCanAdd && (
                 <button
-                  onClick={() => { setShowPasskeyRegister(true); setPasskeyMsg(null); }}
+                  onClick={() => { setShowPasskeyRegister(true); }}
                   className="px-4 py-2 bg-accent text-white rounded hover:bg-accent-hover text-sm font-medium flex items-center gap-2"
                 >
                   <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
