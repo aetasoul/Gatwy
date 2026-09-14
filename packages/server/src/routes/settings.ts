@@ -22,6 +22,7 @@ router.get('/public', (_req: Request, res: Response) => {
     'app.name',
     'app.logo',
     'health_monitor.enabled',
+    'session.auto_close_disconnected_enabled',
     'ssh.font_family',
     'ssh.font_size',
     'ssh.cursor_style',

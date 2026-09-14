@@ -19,6 +19,7 @@ const DEFAULTS: Record<string, string> = {
   'session.recording_retention_days_enabled': 'true',
   'session.recording_retention_size_enabled': 'false',
   'session.recording_retention_max_size_gb': '10',
+  'session.auto_close_disconnected_enabled': 'true',
   'health_monitor.enabled': 'true',
   'version.audit_log_checks': 'true',
   'version.toast_feedback': 'true',

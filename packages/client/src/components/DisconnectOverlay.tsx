@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { useSettings } from '../hooks/useSettings';
 
 const AUTO_CLOSE_SECONDS = 15;
 
@@ -10,10 +11,12 @@ interface DisconnectOverlayProps {
 }
 
 export function DisconnectOverlay({ show, message, onExit, onReconnect }: DisconnectOverlayProps) {
+  const { settings } = useSettings();
+  const autoCloseEnabled = settings['session.auto_close_disconnected_enabled'] !== 'false';
   const [countdown, setCountdown] = useState(AUTO_CLOSE_SECONDS);
 
   useEffect(() => {
-    if (!show) { setCountdown(AUTO_CLOSE_SECONDS); return; }
+    if (!show || !autoCloseEnabled) { setCountdown(AUTO_CLOSE_SECONDS); return; }
 
     setCountdown(AUTO_CLOSE_SECONDS);
     const interval = setInterval(() => {
@@ -25,7 +28,7 @@ export function DisconnectOverlay({ show, message, onExit, onReconnect }: Discon
 
     return () => clearInterval(interval);
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [show]);
+  }, [show, autoCloseEnabled]);
 
   if (!show) return null;
 
@@ -50,24 +53,26 @@ export function DisconnectOverlay({ show, message, onExit, onReconnect }: Discon
         </div>
 
         {/* Countdown ring */}
-        <div className="flex flex-col items-center gap-1">
-          <div className="relative w-12 h-12">
-            <svg className="w-12 h-12 -rotate-90" viewBox="0 0 44 44">
-              <circle cx="22" cy="22" r="18" fill="none" stroke="currentColor" strokeWidth="3" className="text-border" />
-              <circle
-                cx="22" cy="22" r="18" fill="none" stroke="currentColor" strokeWidth="3"
-                className="text-red-400 transition-all duration-1000 ease-linear"
-                strokeDasharray={circumference}
-                strokeDashoffset={circumference - progress}
-                strokeLinecap="round"
-              />
-            </svg>
-            <span className="absolute inset-0 flex items-center justify-center text-sm font-semibold text-text-primary tabular-nums">
-              {countdown}
-            </span>
+        {autoCloseEnabled && (
+          <div className="flex flex-col items-center gap-1">
+            <div className="relative w-12 h-12">
+              <svg className="w-12 h-12 -rotate-90" viewBox="0 0 44 44">
+                <circle cx="22" cy="22" r="18" fill="none" stroke="currentColor" strokeWidth="3" className="text-border" />
+                <circle
+                  cx="22" cy="22" r="18" fill="none" stroke="currentColor" strokeWidth="3"
+                  className="text-red-400 transition-all duration-1000 ease-linear"
+                  strokeDasharray={circumference}
+                  strokeDashoffset={circumference - progress}
+                  strokeLinecap="round"
+                />
+              </svg>
+              <span className="absolute inset-0 flex items-center justify-center text-sm font-semibold text-text-primary tabular-nums">
+                {countdown}
+              </span>
+            </div>
+            <p className="text-xs text-text-secondary">Closing tab automatically</p>
           </div>
-          <p className="text-xs text-text-secondary">Closing tab automatically</p>
-        </div>
+        )}
 
         <div className="flex gap-3 w-full">
           <button onClick={onExit}

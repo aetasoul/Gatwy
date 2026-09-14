@@ -53,6 +53,7 @@ export function GlobalSettings() {
   const [appName, setAppName] = useState('Gatwy');
   const [timezone, setTimezone] = useState('UTC');
   const [healthMonitorEnabled, setHealthMonitorEnabled] = useState(true);
+  const [autoCloseDisconnected, setAutoCloseDisconnected] = useState(true);
   const [generalMsg, setGeneralMsg] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
   const [savingGeneral, setSavingGeneral] = useState(false);
 
@@ -90,6 +91,7 @@ export function GlobalSettings() {
     setLogoPreview(settings['app.logo'] ?? '');
     setAuditRetention(settings['audit.retention_days'] ?? '90');
     setHealthMonitorEnabled(settings['health_monitor.enabled'] !== 'false');
+    setAutoCloseDisconnected(settings['session.auto_close_disconnected_enabled'] !== 'false');
     setVersionAuditLog(settings['version.audit_log_checks'] !== 'false');
     setVersionToast(settings['version.toast_feedback'] !== 'false');
     setVersionNotify(settings['version.notify_on_update'] === 'true');
@@ -135,6 +137,7 @@ export function GlobalSettings() {
         'app.logo': logoPreview,
         'audit.retention_days': auditRetention,
         'health_monitor.enabled': String(healthMonitorEnabled),
+        'session.auto_close_disconnected_enabled': String(autoCloseDisconnected),
         'version.audit_log_checks': String(versionAuditLog),
         'version.toast_feedback': String(versionToast),
         'version.notify_on_update': String(versionNotify),
@@ -280,6 +283,13 @@ export function GlobalSettings() {
             <div>
               <span className="text-sm text-text-secondary">Health monitor</span>
               <p className="text-xs text-text-secondary/60 mt-0.5">Periodically checks if connections are reachable and shows green/red dots in the sidebar.</p>
+            </div>
+          </div>
+          <div className="flex items-center gap-3">
+            <Toggle value={autoCloseDisconnected} onChange={setAutoCloseDisconnected} />
+            <div>
+              <span className="text-sm text-text-secondary">Auto-close disconnected sessions</span>
+              <p className="text-xs text-text-secondary/60 mt-0.5">Automatically closes a session tab 15 seconds after it disconnects. Disable to keep the tab open until the user closes it manually.</p>
             </div>
           </div>
 
