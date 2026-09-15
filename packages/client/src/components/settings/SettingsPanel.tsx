@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { useAuth } from '../../hooks/useAuth';
 import { ToastHost } from '../../hooks/useToast';
 import { ProfileSettings } from './ProfileSettings';
+import { GeneralSettings } from './GeneralSettings';
 import { SshPrefsSettings } from './SshPrefsSettings';
 import { SecuritySettings } from './SecuritySettings';
 import { UsersSettings } from './UsersSettings';
@@ -20,7 +21,7 @@ interface SettingsPanelProps {
   initialSection?: string;
 }
 
-type Section = 'profile' | 'ssh-prefs' | 'security' | 'users' | 'audit' | 'global' | 'sessions' | 'authentication' | 'backup' | 'roles' | 'notifications';
+type Section = 'profile' | 'general' | 'ssh-prefs' | 'security' | 'users' | 'audit' | 'global' | 'sessions' | 'authentication' | 'backup' | 'roles' | 'notifications';
 
 interface NavItem {
   id: Section;
@@ -155,6 +156,7 @@ function RolesIcon() {
 
 const MY_SETTINGS_NAV: NavItem[] = [
   { id: 'profile', label: 'Profile', icon: <UserIcon /> },
+  { id: 'general', label: 'General', icon: <SlidersIcon /> },
   { id: 'ssh-prefs', label: 'SSH Terminal', icon: <TerminalIcon /> },
 ];
 
@@ -176,6 +178,7 @@ const ALL_NAV: NavItem[] = [...MY_SETTINGS_NAV, ...ADMIN_NAV];
 const NAV_LABEL_MAP: Record<Section, string> = {
   'notifications': 'Notifications',
   'profile': 'Profile',
+  'general': 'General',
   'ssh-prefs': 'SSH Terminal',
   'security': 'Security',
   'users': 'Users',
@@ -316,6 +319,7 @@ export function SettingsPanel({ isOpen, onClose, initialSection }: SettingsPanel
           {/* Content */}
           <div className="flex-1 overflow-y-auto p-6">
             {activeSection === 'profile' && <ProfileSettings />}
+            {activeSection === 'general' && <GeneralSettings />}
             {activeSection === 'ssh-prefs' && <SshPrefsSettings />}
             {activeSection === 'security' && hasPerm('settings.security') && <SecuritySettings />}
             {activeSection === 'authentication' && hasPerm('settings.auth_providers') && <AuthProvidersSettings />}

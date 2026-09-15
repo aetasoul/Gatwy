@@ -59,6 +59,7 @@ interface UserRow {
   mfa_secret: string | null;
   ssh_prefs_json: string | null;
   dismissed_warnings_json: string | null;
+  general_prefs_json: string | null;
 }
 
 // GET / — return own profile
@@ -206,6 +207,25 @@ router.put('/ssh-prefs', (req: Request, res: Response) => {
 router.delete('/ssh-prefs', (req: Request, res: Response) => {
   const userId = req.user!.userId;
   execute('UPDATE users SET ssh_prefs_json = NULL WHERE id = ?', [userId]);
+  res.json({ ok: true });
+});
+
+// GET /general-prefs — return user's general UI preferences
+router.get('/general-prefs', (req: Request, res: Response) => {
+  const userId = req.user!.userId;
+  const user = queryOne<UserRow>('SELECT general_prefs_json FROM users WHERE id = ?', [userId]);
+  const json = user?.general_prefs_json ?? null;
+  const prefs = json ? (JSON.parse(json) as Record<string, unknown>) : {};
+  res.json({
+    commandPaletteShortcut: prefs.commandPaletteShortcut !== false,
+  });
+});
+
+// PUT /general-prefs — save user's general UI preferences
+router.put('/general-prefs', (req: Request, res: Response) => {
+  const userId = req.user!.userId;
+  const { commandPaletteShortcut } = req.body as { commandPaletteShortcut?: boolean };
+  execute('UPDATE users SET general_prefs_json = ? WHERE id = ?', [JSON.stringify({ commandPaletteShortcut: commandPaletteShortcut !== false }), userId]);
   res.json({ ok: true });
 });
 

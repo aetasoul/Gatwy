@@ -235,6 +235,7 @@ function runMigrations() {
           auth_provider TEXT NOT NULL DEFAULT 'local',
           provider_id TEXT,
           dismissed_warnings_json TEXT,
+          general_prefs_json TEXT,
           created_at TEXT NOT NULL DEFAULT (datetime('now')),
           updated_at TEXT NOT NULL DEFAULT (datetime('now'))
         );
@@ -911,6 +912,12 @@ function runMigrations() {
             );
           }
         }
+      },
+    },
+    {
+      version: 19,
+      run: (database: Database) => {
+        try { database.run('ALTER TABLE users ADD COLUMN general_prefs_json TEXT'); } catch { /* already exists */ }
       },
     },
   ];

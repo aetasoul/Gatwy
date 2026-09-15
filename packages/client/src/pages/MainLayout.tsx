@@ -7,6 +7,7 @@ import { PaneOverlay } from '../components/PaneOverlay';
 import { CommandPalette } from '../components/CommandPalette';
 import { SettingsPanel } from '../components/settings/SettingsPanel';
 import { useSettings } from '../hooks/useSettings';
+import { useGeneralPrefs } from '../hooks/useGeneralPrefs';
 import { useAuth } from '../hooks/useAuth';
 import type { PaneNode } from '../types/panes';
 import { type Protocol, type SessionProtocol } from '../types/protocol.js';
@@ -230,6 +231,8 @@ export function MainLayout() {
   useEffect(() => { viewsRef.current = views; }, [views]);
   useEffect(() => { activeViewIdRef.current = activeViewId; }, [activeViewId]);
 
+  const { commandPaletteShortcut } = useGeneralPrefs();
+
   // ---------- Global shortcuts ----------
   // Capture phase + stopImmediatePropagation so these win over the window-level
   // key capture that RDP/VNC sessions install to forward keystrokes to the host.
@@ -247,7 +250,7 @@ export function MainLayout() {
       if (e.key === '`') {
         consume(e);
         cycleSidebarMode();
-      } else if (!e.altKey && (e.key === 'k' || e.key === 'K')) {
+      } else if (commandPaletteShortcut && !e.altKey && (e.key === 'k' || e.key === 'K')) {
         consume(e);
         setPaletteOpen((open) => !open);
       }
@@ -256,7 +259,7 @@ export function MainLayout() {
     // Swallow the matching keyup so remote sessions don't see a release without a press
     const onKeyUp = (e: KeyboardEvent) => {
       if (!(e.ctrlKey || e.metaKey)) return;
-      if (e.key === '`' || e.key === 'k' || e.key === 'K') consume(e);
+      if (e.key === '`' || (commandPaletteShortcut && (e.key === 'k' || e.key === 'K'))) consume(e);
     };
 
     window.addEventListener('keydown', onKeyDown, true);
@@ -265,7 +268,7 @@ export function MainLayout() {
       window.removeEventListener('keydown', onKeyDown, true);
       window.removeEventListener('keyup', onKeyUp, true);
     };
-  }, [cycleSidebarMode]);
+  }, [cycleSidebarMode, commandPaletteShortcut]);
 
   // Measure sessions container for pane rect computation
   useEffect(() => {
