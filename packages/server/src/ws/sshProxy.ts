@@ -387,6 +387,8 @@ export function setupSshProxy(server: https.Server): void {
             username: conn.username || '',
             password: oneTimePassword,
             readyTimeout: 15000,
+            keepaliveInterval: 15000,
+            keepaliveCountMax: 3,
             hostVerifier,
           });
         });
@@ -406,6 +408,10 @@ export function setupSshProxy(server: https.Server): void {
         username: conn.username || '',
         ...(privateKey ? { privateKey } : { password }),
         readyTimeout: 15000,
+        // Idle interactive shells generate no traffic — without SSH-level keepalives, NAT/firewalls
+        // between the server and the remote host silently drop the TCP connection (issue #45).
+        keepaliveInterval: 15000,
+        keepaliveCountMax: 3,
         hostVerifier,
       });
     }
