@@ -1,6 +1,14 @@
 import { useRef, useState, useEffect, type ReactNode, type FormEvent } from 'react';
 import { type Protocol } from '../types/protocol.js';
 import { pointerScaleToPercent } from '../lib/vncPointerMap';
+
+const TagRemoveIcon = () => (
+  <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round">
+    <line x1="18" y1="6" x2="6" y2="18" />
+    <line x1="6" y1="6" x2="18" y2="18" />
+  </svg>
+);
+
 interface Connection {
   id: string;
   name: string;
@@ -724,16 +732,6 @@ export function ConnectionModal({ connection, groups, onClose, onSaved, prefill,
 
             <div className="flex-1 min-w-0">
               <label className="block text-xs font-medium text-text-secondary mb-1">Tags</label>
-              {tags.length > 0 && (
-                <div className="flex flex-wrap gap-1 mb-1.5">
-                  {tags.map((tag) => (
-                    <span key={tag} className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-accent/15 text-accent text-xs">
-                      {tag}
-                      <button type="button" onClick={() => setTags(tags.filter((t) => t !== tag))} className="hover:text-red-400 text-[10px] leading-none">×</button>
-                    </span>
-                  ))}
-                </div>
-              )}
               <input
                 type="text"
                 value={tagInput}
@@ -751,6 +749,22 @@ export function ConnectionModal({ connection, groups, onClose, onSaved, prefill,
                 placeholder="Type and press Enter to add tags..."
                 className="w-full px-2.5 py-1.5 bg-surface border border-border rounded text-sm text-text-primary focus:outline-hidden focus:ring-2 focus:ring-accent"
               />
+              {tags.length > 0 && (
+                <div className="flex flex-wrap gap-1 mt-1.5">
+                  {tags.map((tag) => (
+                    <span key={tag} className="inline-flex items-center gap-1 pl-2 pr-1 py-0.5 rounded bg-accent/15 text-accent text-xs">
+                      {tag}
+                      <button
+                        type="button"
+                        onClick={() => setTags(tags.filter((t) => t !== tag))}
+                        className="p-0.5 rounded-full text-accent/70 hover:text-white hover:bg-accent/60 transition-colors"
+                      >
+                        <TagRemoveIcon />
+                      </button>
+                    </span>
+                  ))}
+                </div>
+              )}
             </div>
           </div>
 
