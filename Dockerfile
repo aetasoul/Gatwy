@@ -40,6 +40,11 @@ COPY packages/client/package.json packages/client/
 # cpu-features (ssh2 optional dep) skipped — ssh2 works without it; avoids hours of QEMU ARM64 compilation
 RUN npm install --omit=dev --ignore-scripts --workspace=packages/server
 
+# sql.js ships every build variant (asm.js, debug, worker, browser, zips) it has
+# ever produced. initSqlJs() with no config only ever loads sql-wasm.js/.wasm
+# (confirmed in db/index.ts and routes/backup.ts) — prune the rest (~22MB).
+RUN find node_modules/sql.js/dist -type f ! -name 'sql-wasm.js' ! -name 'sql-wasm.wasm' -delete
+
 # Copy built server
 COPY --from=builder /app/packages/server/dist packages/server/dist/
 
