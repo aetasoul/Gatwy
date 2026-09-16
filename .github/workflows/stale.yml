@@ -1,0 +1,54 @@
+name: Stale Issues
+
+on:
+  schedule:
+    # Daily at 03:00 UTC
+    - cron: "0 3 * * *"
+  workflow_dispatch:
+
+permissions:
+  issues: write
+  pull-requests: write
+
+jobs:
+  stale:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/stale@v10
+        with:
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+
+          # Issues
+          days-before-issue-stale: 60
+          days-before-issue-close: 30
+
+          stale-issue-label: stale
+
+          stale-issue-message: >
+            This issue has had no activity for 60 days and has been marked
+            as stale.
+
+            If this issue is still relevant, please leave a comment or update
+            the issue. Any activity will automatically remove the stale label.
+
+          close-issue-message: >
+            Closing this issue due to inactivity.
+
+            If you believe this issue is still relevant, feel free to reopen it
+            with additional details or context.
+
+          # Protected labels
+          exempt-issue-labels: >
+            never-stale,
+            security,
+            roadmap,
+            enhancement
+
+          # Ignore PRs entirely
+          days-before-pr-stale: -1
+          days-before-pr-close: -1
+
+          remove-stale-when-updated: true
+
+          operations-per-run: 100
