@@ -16,6 +16,7 @@
 
 [Website](https://gatwy.dev) · [Documentation](https://docs.gatwy.dev) · [Gatwy vs Guacamole](https://docs.gatwy.dev/comparison)
 
+[Quick Start](#-quick-start) · [Configuration](#️-configuration)
 </div>
 
 ---
@@ -44,6 +45,8 @@ One container. Zero dependencies. Open your browser and connect.
 
 ## 🐳 Quick Start
 
+### Docker Compose
+
 ```yaml
 # docker-compose.yml
 services:
@@ -63,9 +66,21 @@ services:
 docker compose up -d
 ```
 
+### Docker Run
+
+```bash
+docker run -d \
+  --name gatwy \
+  --restart unless-stopped \
+  -p 7443:7443 \
+  -v ./data:/app/data \
+  -e GATWY_ENCRYPTION_KEY=your-64-char-hex-key \
+  ghcr.io/kotoxie/gatwy:latest
+```
+
 Open **`https://<YOUR_IP>:7443`** — on first launch you'll be prompted to create an admin account.
 
-> ⚠️ The browser will warn about the self-signed certificate. Accept the exception to proceed, or [bring your own cert](https://docs.gatwy.dev).
+> ⚠️ The browser will warn about the self-signed certificate. Accept the exception to proceed, or [bring your own cert](https://docs.gatwy.dev/configuration#tls).
 
 ---
 
