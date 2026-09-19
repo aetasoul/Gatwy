@@ -5,6 +5,7 @@ import crypto from 'crypto';
 import { queryOne, execute } from '../db/helpers.js';
 import { authRequired, requirePermission } from '../middleware/auth.js';
 import { decrypt } from '../services/encryption.js';
+import { applyCredential } from '../services/credentials.js';
 import { logAudit } from '../services/audit.js';
 import { logFileSessionEvent } from '../services/fileSession.js';
 import { resolveClientIp } from '../services/ip.js';
@@ -23,15 +24,18 @@ interface ConnRow {
   user_id: string;
   shared: number;
   host_fingerprint: string | null;
+  credential_id: string | null;
+  encrypted_passphrase?: string | null;
 }
 
 function getConn(connectionId: string, userId: string, role: string): ConnRow | null {
-  return queryOne<ConnRow>(
-    `SELECT id, host, port, username, encrypted_password, private_key, user_id, shared, host_fingerprint
+  const conn = queryOne<ConnRow>(
+    `SELECT id, host, port, username, encrypted_password, private_key, user_id, shared, host_fingerprint, credential_id
      FROM connections
      WHERE id = ? AND (user_id = ? OR shared = 1 OR id IN (SELECT cs.connection_id FROM connection_shares cs WHERE (cs.share_type = 'user' AND cs.target_id = ?) OR (cs.share_type = 'role' AND cs.target_id = ?))) AND protocol IN ('sftp', 'ssh')`,
     [connectionId, userId, userId, role],
-  ) ?? null;
+  );
+  return conn ? applyCredential(conn, userId) : null;
 }
 
 function connectSftp(conn: ConnRow): Promise<{ ssh: SshClient; sftp: SFTPWrapper }> {
@@ -42,6 +46,9 @@ function connectSftp(conn: ConnRow): Promise<{ ssh: SshClient; sftp: SFTPWrapper
       : undefined;
     const privateKey = conn.private_key
       ? (() => { try { return decrypt(conn.private_key!); } catch { return undefined; } })()
+      : undefined;
+    const passphrase = conn.encrypted_passphrase
+      ? (() => { try { return decrypt(conn.encrypted_passphrase!); } catch { return undefined; } })()
       : undefined;
 
     ssh.on('ready', () => {
@@ -57,7 +64,7 @@ function connectSftp(conn: ConnRow): Promise<{ ssh: SshClient; sftp: SFTPWrapper
       host: conn.host,
       port: conn.port || 22,
       username: conn.username || 'root',
-      ...(privateKey ? { privateKey } : { password }),
+      ...(privateKey ? { privateKey, passphrase } : { password }),
       readyTimeout: 10000,
       hostVerifier: (key: Buffer) => {
         const fingerprint = crypto.createHash('sha256').update(key).digest('hex');

@@ -19,6 +19,7 @@ import { getSetting } from './services/settings.js';
 import { startAutoBackupScheduler } from './services/autoBackup.js';
 import authRoutes from './routes/auth.js';
 import connectionRoutes from './routes/connections.js';
+import credentialRoutes from './routes/credentials.js';
 import healthRoutes from './routes/health.js';
 import settingsRoutes from './routes/settings.js';
 import profileRoutes from './routes/profile.js';
@@ -146,6 +147,7 @@ async function main() {
   app.use('/api/v1', ipRulesMiddleware);
   app.use('/api/v1/auth', authRoutes);
   app.use('/api/v1/connections', connectionRoutes);
+  app.use('/api/v1/credentials', credentialRoutes);
   app.use('/api/v1/settings', settingsRoutes);
   app.use('/api/v1/profile/login-sessions', loginSessionsRoutes);
   app.use('/api/v1/profile', profileRoutes);
