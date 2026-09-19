@@ -2,7 +2,8 @@ import { Router, type Request, type Response } from 'express';
 import { v4 as uuid } from 'uuid';
 import { queryAll, queryOne, execute } from '../db/helpers.js';
 import { authRequired, userCan } from '../middleware/auth.js';
-import { encrypt } from '../services/encryption.js';
+import { encrypt, decrypt } from '../services/encryption.js';
+import { validatePrivateKey } from '../services/sshKeys.js';
 import { logAudit } from '../services/audit.js';
 import { CREDENTIAL_TYPES, type CredentialRow } from '../services/credentials.js';
 
@@ -91,6 +92,10 @@ router.post('/', (req: Request, res: Response) => {
   if (type === 'key' && !privateKey?.trim()) {
     res.status(400).json({ error: 'Private key is required' }); return;
   }
+  if (type === 'key') {
+    const keyErr = validatePrivateKey(privateKey!, passphrase || undefined);
+    if (keyErr) { res.status(400).json({ error: keyErr }); return; }
+  }
   if (shared && !userCan(req, 'credentials.share')) {
     res.status(403).json({ error: 'Not permitted to create shared credentials' }); return;
   }
@@ -137,6 +142,19 @@ router.put('/:id', (req: Request, res: Response) => {
     shared?: boolean; clearPassword?: boolean; clearPassphrase?: boolean;
   };
   const isKey = cred.type === 'key';
+
+  // Re-validate whenever the key or its passphrase changes, against whichever
+  // half is not being replaced.
+  if (isKey && (privateKey?.trim() || passphrase || clearPassphrase)) {
+    let nextKey = privateKey?.trim() ? privateKey : undefined;
+    let nextPassphrase = passphrase || undefined;
+    try {
+      if (!nextKey && cred.private_key) nextKey = decrypt(cred.private_key);
+      if (!nextPassphrase && !clearPassphrase && cred.encrypted_passphrase) nextPassphrase = decrypt(cred.encrypted_passphrase);
+    } catch { /* stored value unreadable — validate what we have */ }
+    const keyErr = nextKey ? validatePrivateKey(nextKey, nextPassphrase) : 'Private key is required';
+    if (keyErr) { res.status(400).json({ error: keyErr }); return; }
+  }
 
   if (shared !== undefined && !!shared !== (cred.shared === 1)) {
     if (!userCan(req, 'credentials.share')) {

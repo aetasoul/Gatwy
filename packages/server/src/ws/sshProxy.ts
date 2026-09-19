@@ -13,6 +13,7 @@ import { queryOne, execute } from '../db/helpers.js';
 import { redeemWsTicket } from '../services/wsTicket.js';
 import { userHasPermission, wsCanAccess } from '../services/permissions.js';
 import { applyCredential } from '../services/credentials.js';
+import { friendlyKeyError } from '../services/sshKeys.js';
 import { decrypt, encryptRecordingStream } from '../services/encryption.js';
 import { logAudit } from '../services/audit.js';
 import { resolveClientIp } from '../services/ip.js';
@@ -332,7 +333,11 @@ export function setupSshProxy(server: https.Server): void {
       console.error('[ssh] error:', err.message);
       if (ws.readyState === WebSocket.OPEN) {
         ws.send(JSON.stringify({ type: 'error', message: err.message }));
-        ws.close(4003, err.message);
+        // Close reasons are capped at 123 bytes and ws throws beyond that; the
+        // full message has already been sent above.
+        let reason = err.message;
+        while (Buffer.byteLength(reason) > 123) reason = reason.slice(0, -1);
+        ws.close(4003, reason);
       }
     });
 
@@ -357,6 +362,19 @@ export function setupSshProxy(server: https.Server): void {
       }
       execute('UPDATE connections SET host_fingerprint = ? WHERE id = ?', [fingerprint, conn.id]);
       return true;
+    };
+
+    // ssh2 throws synchronously from connect() for config problems such as an
+    // encrypted key without a passphrase — route those through the normal error
+    // path instead of letting them crash the process.
+    const startSsh = (cfg: Parameters<SshClient['connect']>[0]) => {
+      try {
+        ssh.connect(cfg);
+      } catch (err) {
+        const msg = (err as Error).message;
+        const keyErr = msg.match(/^Cannot parse privateKey: (.*)$/);
+        ssh.emit('error', new Error(keyErr ? friendlyKeyError(keyErr[1]) : msg));
+      }
     };
 
     if (promptOnConnect) {
@@ -389,7 +407,7 @@ export function setupSshProxy(server: https.Server): void {
               rows = json.rows;
             }
           } catch { /* use defaults */ }
-          ssh.connect({
+          startSsh({
             host: conn.host, port: conn.port,
             username: conn.username || '',
             password: oneTimePassword,
@@ -410,7 +428,7 @@ export function setupSshProxy(server: https.Server): void {
           }
         } catch { /* not a resize — ignore */ }
       });
-      ssh.connect({
+      startSsh({
         host: conn.host, port: conn.port,
         username: conn.username || '',
         ...(privateKey ? { privateKey, passphrase } : { password }),

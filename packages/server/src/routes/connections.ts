@@ -6,6 +6,7 @@ import { authRequired, userCan } from '../middleware/auth.js';
 import { encrypt, decrypt } from '../services/encryption.js';
 import { logAudit } from '../services/audit.js';
 import { applyCredential, checkCredentialAssignable, isConnectionShared } from '../services/credentials.js';
+import { validatePrivateKey } from '../services/sshKeys.js';
 import { filterListedConnections, isMoonlightWebAvailable, runtimeFeatures } from '../services/moonlightWeb.js';
 
 const ALL_PROTOCOLS = ['ssh', 'rdp', 'smb', 'vnc', 'moonlight', 'sftp', 'ftp', 'telnet', 'postgres', 'mysql'] as const;
@@ -18,6 +19,16 @@ function createProtocols(): readonly string[] {
 
 const router = Router();
 router.use(authRequired);
+
+/** Validate an inline (passphrase-less) private key; returns an error message or null. */
+function inlineKeyError(privateKey: unknown): string | null {
+  if (typeof privateKey !== 'string' || !privateKey.trim()) return null;
+  const err = validatePrivateKey(privateKey);
+  if (!err) return null;
+  return /passphrase/i.test(err)
+    ? 'This private key is encrypted. Connections can\'t store a key passphrase — save the key with its passphrase in Settings → Credentials and select it here.'
+    : err;
+}
 
 interface ConnectionRow {
   id: string;
@@ -313,6 +324,9 @@ router.post('/', (req: Request, res: Response) => {
   if (credentialId) {
     const err = checkCredentialAssignable(credentialId, userId, !!shared, userCan(req, 'credentials.use_shared'));
     if (err) { res.status(400).json({ error: err }); return; }
+  } else {
+    const keyErr = inlineKeyError(privateKey);
+    if (keyErr) { res.status(400).json({ error: keyErr }); return; }
   }
 
   const id = uuid();
@@ -432,6 +446,10 @@ router.put('/:id', (req: Request, res: Response) => {
     const nextShared = isConnectionShared(id, shared !== undefined ? !!shared : existing.shared);
     const err = checkCredentialAssignable(nextCredentialId, existing.user_id, nextShared, userCan(req, 'credentials.use_shared'));
     if (err) { res.status(400).json({ error: err }); return; }
+  }
+  if (!nextCredentialId) {
+    const keyErr = inlineKeyError(privateKey);
+    if (keyErr) { res.status(400).json({ error: keyErr }); return; }
   }
 
   // Validate VNC pointer scale on update
