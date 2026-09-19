@@ -189,9 +189,12 @@ export function restoreDbFromBytes(bytes: Buffer): void {
   const prev = db;
   db = next;
   try {
+    // A backup from an older version has an older schema — bring it up to date
+    // now rather than leaving routes to hit missing tables until the next restart.
+    runMigrations();
     saveDb();
   } catch (err) {
-    // Keep the previous in-memory DB if the atomic persist failed.
+    // Keep the previous in-memory DB if migrating or the atomic persist failed.
     db = prev;
     try { next.close(); } catch { /* ignore */ }
     throw err;
