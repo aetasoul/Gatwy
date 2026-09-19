@@ -6,7 +6,7 @@ import { queryOne, execute } from '../db/helpers.js';
 import { authRequired, requirePermission } from '../middleware/auth.js';
 import { decrypt } from '../services/encryption.js';
 import { applyCredential } from '../services/credentials.js';
-import { friendlyKeyError } from '../services/sshKeys.js';
+import { friendlyKeyError, prepareKey } from '../services/sshKeys.js';
 import { logAudit } from '../services/audit.js';
 import { logFileSessionEvent } from '../services/fileSession.js';
 import { resolveClientIp } from '../services/ip.js';
@@ -45,12 +45,16 @@ function connectSftp(conn: ConnRow): Promise<{ ssh: SshClient; sftp: SFTPWrapper
     const password = conn.encrypted_password
       ? (() => { try { return decrypt(conn.encrypted_password!); } catch { return undefined; } })()
       : undefined;
-    const privateKey = conn.private_key
+    const storedKey = conn.private_key
       ? (() => { try { return decrypt(conn.private_key!); } catch { return undefined; } })()
       : undefined;
-    const passphrase = conn.encrypted_passphrase
+    const storedPassphrase = conn.encrypted_passphrase
       ? (() => { try { return decrypt(conn.encrypted_passphrase!); } catch { return undefined; } })()
       : undefined;
+    const preparedKey = storedKey ? prepareKey(storedKey, storedPassphrase) : undefined;
+    if (preparedKey && 'error' in preparedKey) { reject(new Error(preparedKey.error)); return; }
+    const privateKey = preparedKey?.key.privateKey;
+    const passphrase = preparedKey?.key.passphrase;
 
     ssh.on('ready', () => {
       ssh.sftp((err, sftp) => {

@@ -3,7 +3,7 @@ import { v4 as uuid } from 'uuid';
 import { queryAll, queryOne, execute } from '../db/helpers.js';
 import { authRequired, userCan } from '../middleware/auth.js';
 import { encrypt, decrypt } from '../services/encryption.js';
-import { validatePrivateKey } from '../services/sshKeys.js';
+import { prepareKey, type PreparedKey } from '../services/sshKeys.js';
 import { logAudit } from '../services/audit.js';
 import { CREDENTIAL_TYPES, type CredentialRow } from '../services/credentials.js';
 
@@ -92,9 +92,13 @@ router.post('/', (req: Request, res: Response) => {
   if (type === 'key' && !privateKey?.trim()) {
     res.status(400).json({ error: 'Private key is required' }); return;
   }
+  // PKCS#8 keys are converted to an unencrypted format ssh2 reads; the
+  // passphrase is then no longer needed (secrets are encrypted at rest anyway).
+  let key: PreparedKey | null = null;
   if (type === 'key') {
-    const keyErr = validatePrivateKey(privateKey!, passphrase || undefined);
-    if (keyErr) { res.status(400).json({ error: keyErr }); return; }
+    const prepared = prepareKey(privateKey!, passphrase || undefined);
+    if ('error' in prepared) { res.status(400).json({ error: prepared.error }); return; }
+    key = prepared.key;
   }
   if (shared && !userCan(req, 'credentials.share')) {
     res.status(403).json({ error: 'Not permitted to create shared credentials' }); return;
@@ -108,8 +112,8 @@ router.post('/', (req: Request, res: Response) => {
     [
       id, userId, name.trim(), type, username?.trim() || null,
       !isKey && password ? encrypt(password) : null,
-      isKey ? encrypt(privateKey!) : null,
-      isKey && passphrase ? encrypt(passphrase) : null,
+      key ? encrypt(key.privateKey) : null,
+      key?.passphrase ? encrypt(key.passphrase) : null,
       shared ? 1 : 0,
     ],
   );
@@ -145,6 +149,7 @@ router.put('/:id', (req: Request, res: Response) => {
 
   // Re-validate whenever the key or its passphrase changes, against whichever
   // half is not being replaced.
+  let key: PreparedKey | null = null;
   if (isKey && (privateKey?.trim() || passphrase || clearPassphrase)) {
     let nextKey = privateKey?.trim() ? privateKey : undefined;
     let nextPassphrase = passphrase || undefined;
@@ -152,8 +157,10 @@ router.put('/:id', (req: Request, res: Response) => {
       if (!nextKey && cred.private_key) nextKey = decrypt(cred.private_key);
       if (!nextPassphrase && !clearPassphrase && cred.encrypted_passphrase) nextPassphrase = decrypt(cred.encrypted_passphrase);
     } catch { /* stored value unreadable — validate what we have */ }
-    const keyErr = nextKey ? validatePrivateKey(nextKey, nextPassphrase) : 'Private key is required';
-    if (keyErr) { res.status(400).json({ error: keyErr }); return; }
+    if (!nextKey) { res.status(400).json({ error: 'Private key is required' }); return; }
+    const prepared = prepareKey(nextKey, nextPassphrase);
+    if ('error' in prepared) { res.status(400).json({ error: prepared.error }); return; }
+    key = prepared.key;
   }
 
   if (shared !== undefined && !!shared !== (cred.shared === 1)) {
@@ -180,9 +187,14 @@ router.put('/:id', (req: Request, res: Response) => {
     if (password) { updates.push('encrypted_password = ?'); params.push(encrypt(password)); }
     else if (clearPassword) { updates.push('encrypted_password = NULL'); }
   } else {
-    if (privateKey?.trim()) { updates.push('private_key = ?'); params.push(encrypt(privateKey)); }
-    if (passphrase) { updates.push('encrypted_passphrase = ?'); params.push(encrypt(passphrase)); }
-    else if (clearPassphrase) { updates.push('encrypted_passphrase = NULL'); }
+    if (key?.converted) {
+      // Converted keys are stored unencrypted, so any passphrase is dropped.
+      updates.push('private_key = ?', 'encrypted_passphrase = NULL'); params.push(encrypt(key.privateKey));
+    } else {
+      if (privateKey?.trim()) { updates.push('private_key = ?'); params.push(encrypt(privateKey)); }
+      if (passphrase) { updates.push('encrypted_passphrase = ?'); params.push(encrypt(passphrase)); }
+      else if (clearPassphrase) { updates.push('encrypted_passphrase = NULL'); }
+    }
   }
   if (shared !== undefined) { updates.push('shared = ?'); params.push(shared ? 1 : 0); }
 

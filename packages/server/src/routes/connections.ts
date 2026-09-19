@@ -6,7 +6,7 @@ import { authRequired, userCan } from '../middleware/auth.js';
 import { encrypt, decrypt } from '../services/encryption.js';
 import { logAudit } from '../services/audit.js';
 import { applyCredential, checkCredentialAssignable, isConnectionShared } from '../services/credentials.js';
-import { validatePrivateKey } from '../services/sshKeys.js';
+import { prepareKey } from '../services/sshKeys.js';
 import { filterListedConnections, isMoonlightWebAvailable, runtimeFeatures } from '../services/moonlightWeb.js';
 
 const ALL_PROTOCOLS = ['ssh', 'rdp', 'smb', 'vnc', 'moonlight', 'sftp', 'ftp', 'telnet', 'postgres', 'mysql'] as const;
@@ -20,14 +20,22 @@ function createProtocols(): readonly string[] {
 const router = Router();
 router.use(authRequired);
 
-/** Validate an inline (passphrase-less) private key; returns an error message or null. */
-function inlineKeyError(privateKey: unknown): string | null {
-  if (typeof privateKey !== 'string' || !privateKey.trim()) return null;
-  const err = validatePrivateKey(privateKey);
-  if (!err) return null;
-  return /passphrase/i.test(err)
-    ? 'This private key is encrypted. Connections can\'t store a key passphrase — save the key with its passphrase in Settings → Credentials and select it here.'
-    : err;
+/**
+ * Prepare an inline (passphrase-less) private key for storage — PKCS#8 keys are
+ * converted to a format ssh2 reads. Returns the key to store (null when none
+ * was given), or an error message.
+ */
+function prepareInlineKey(privateKey: unknown): { key: string | null } | { error: string } {
+  if (typeof privateKey !== 'string' || !privateKey.trim()) return { key: null };
+  const prepared = prepareKey(privateKey);
+  if ('error' in prepared) {
+    return {
+      error: /passphrase/i.test(prepared.error)
+        ? 'This private key is encrypted. Connections can\'t store a key passphrase — save the key with its passphrase in Settings → Credentials and select it here.'
+        : prepared.error,
+    };
+  }
+  return { key: prepared.key.privateKey };
 }
 
 interface ConnectionRow {
@@ -324,15 +332,14 @@ router.post('/', (req: Request, res: Response) => {
   if (credentialId) {
     const err = checkCredentialAssignable(credentialId, userId, !!shared, userCan(req, 'credentials.use_shared'));
     if (err) { res.status(400).json({ error: err }); return; }
-  } else {
-    const keyErr = inlineKeyError(privateKey);
-    if (keyErr) { res.status(400).json({ error: keyErr }); return; }
   }
+  const inlineKey = credentialId ? { key: null } : prepareInlineKey(privateKey);
+  if ('error' in inlineKey) { res.status(400).json({ error: inlineKey.error }); return; }
 
   const id = uuid();
   // A linked library credential replaces inline credentials entirely.
   const encryptedPassword = !credentialId && password ? encrypt(password) : null;
-  const encryptedKey = !credentialId && privateKey ? encrypt(privateKey) : null;
+  const encryptedKey = inlineKey.key ? encrypt(inlineKey.key) : null;
   const tagsStr = Array.isArray(tags) ? JSON.stringify(tags.map((t: string) => t.trim()).filter(Boolean)) : null;
 
   execute(
@@ -447,10 +454,8 @@ router.put('/:id', (req: Request, res: Response) => {
     const err = checkCredentialAssignable(nextCredentialId, existing.user_id, nextShared, userCan(req, 'credentials.use_shared'));
     if (err) { res.status(400).json({ error: err }); return; }
   }
-  if (!nextCredentialId) {
-    const keyErr = inlineKeyError(privateKey);
-    if (keyErr) { res.status(400).json({ error: keyErr }); return; }
-  }
+  const inlineKey = nextCredentialId ? { key: null } : prepareInlineKey(privateKey);
+  if ('error' in inlineKey) { res.status(400).json({ error: inlineKey.error }); return; }
 
   // Validate VNC pointer scale on update
   if (extraConfig && (protocol === 'vnc' || (!protocol && existing.protocol === 'vnc'))) {
@@ -479,7 +484,7 @@ router.put('/:id', (req: Request, res: Response) => {
   } else {
     if (username !== undefined) { updates.push('username = ?'); params.push(username || null); }
     if (password) { updates.push('encrypted_password = ?'); params.push(encrypt(password)); }
-    if (privateKey !== undefined) { updates.push('private_key = ?'); params.push(privateKey ? encrypt(privateKey) : null); }
+    if (privateKey !== undefined) { updates.push('private_key = ?'); params.push(inlineKey.key ? encrypt(inlineKey.key) : null); }
   }
   if (groupId !== undefined) { updates.push('group_id = ?'); params.push(groupId || null); }
   if (shared !== undefined) { updates.push('shared = ?'); params.push(shared ? 1 : 0); }

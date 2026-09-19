@@ -277,7 +277,9 @@ export function CredentialsSettings() {
                   ))}
                 </div>
                 {type === 'key' && (
-                  <p className="text-[11px] text-text-secondary mt-1">SSH keys work with SSH and SFTP connections.</p>
+                  <p className="text-[11px] text-text-secondary mt-1">
+                    SSH keys work with SSH and SFTP connections. OpenSSH, PEM and PKCS#8 keys (RSA, ECDSA, Ed25519) are accepted.
+                  </p>
                 )}
               </div>
 

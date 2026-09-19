@@ -13,7 +13,7 @@ import { queryOne, execute } from '../db/helpers.js';
 import { redeemWsTicket } from '../services/wsTicket.js';
 import { userHasPermission, wsCanAccess } from '../services/permissions.js';
 import { applyCredential } from '../services/credentials.js';
-import { friendlyKeyError } from '../services/sshKeys.js';
+import { friendlyKeyError, prepareKey } from '../services/sshKeys.js';
 import { decrypt, encryptRecordingStream } from '../services/encryption.js';
 import { logAudit } from '../services/audit.js';
 import { resolveClientIp } from '../services/ip.js';
@@ -348,12 +348,18 @@ export function setupSshProxy(server: https.Server): void {
     const password = conn.encrypted_password
       ? (() => { try { return decrypt(conn.encrypted_password!); } catch { return undefined; } })()
       : undefined;
-    const privateKey = conn.private_key
+    const storedKey = conn.private_key
       ? (() => { try { return decrypt(conn.private_key!); } catch { return undefined; } })()
       : undefined;
-    const passphrase = conn.encrypted_passphrase
+    const storedPassphrase = conn.encrypted_passphrase
       ? (() => { try { return decrypt(conn.encrypted_passphrase!); } catch { return undefined; } })()
       : undefined;
+    // Convert PKCS#8 keys saved before conversion existed, and surface key
+    // problems as a clear session error.
+    const preparedKey = storedKey ? prepareKey(storedKey, storedPassphrase) : undefined;
+    const keyError = preparedKey && 'error' in preparedKey ? preparedKey.error : undefined;
+    const privateKey = preparedKey && 'key' in preparedKey ? preparedKey.key.privateKey : undefined;
+    const passphrase = preparedKey && 'key' in preparedKey ? preparedKey.key.passphrase : undefined;
 
     const hostVerifier = (key: Buffer): boolean => {
       const fingerprint = crypto.createHash('sha256').update(key).digest('hex');
@@ -428,6 +434,7 @@ export function setupSshProxy(server: https.Server): void {
           }
         } catch { /* not a resize — ignore */ }
       });
+      if (keyError) { ssh.emit('error', new Error(keyError)); return; }
       startSsh({
         host: conn.host, port: conn.port,
         username: conn.username || '',
