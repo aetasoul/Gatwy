@@ -4,6 +4,7 @@ import { useSettings } from '../hooks/useSettings';
 import { useAuth } from '../hooks/useAuth';
 import { useIsMobile } from '../hooks/useIsMobile';
 import { ConnectionModal, type ConnectionPrefill } from './ConnectionModal';
+import { FolderShareModal } from './FolderShareModal';
 import { type Protocol } from '../types/protocol.js';
 import { pointerScaleToPercent } from '../lib/vncPointerMap';
 
@@ -219,13 +220,16 @@ function ProtocolSubmenuItems({ groupId: _groupId, onSelect, moonlightAvailable 
 
 export function Sidebar({ onConnect, onConnectMultiple, width }: SidebarProps) {
   const { settings } = useSettings();
-  const { features } = useAuth();
+  const { features, user } = useAuth();
   const moonlightAvailable = features.moonlight;
+  const canShareFolders = user?.permissions?.includes('connections.share') ?? false;
   const isMobile = useIsMobile();
   const healthMonitorEnabled = settings['health_monitor.enabled'] !== 'false';
   const [groups, setGroups] = useState<ConnectionGroup[]>([]);
   const [ungrouped, setUngrouped] = useState<Connection[]>([]);
   const [sharedConnections, setSharedConnections] = useState<Connection[]>([]);
+  const [sharedGroups, setSharedGroups] = useState<ConnectionGroup[]>([]);
+  const [shareFolderTarget, setShareFolderTarget] = useState<ConnectionGroup | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
   const searchRef = useRef<HTMLInputElement>(null);
   const [selectedTags, setSelectedTags] = useState<Set<string>>(new Set());
@@ -324,6 +328,7 @@ export function Sidebar({ onConnect, onConnectMultiple, width }: SidebarProps) {
       g.children.forEach(collectFromGroup);
     }
     groups.forEach(collectFromGroup);
+    sharedGroups.forEach(collectFromGroup);
     ungrouped.forEach((c) => allConns.push({ id: c.id, host: c.host, port: c.port }));
     sharedConnections.forEach((c) => allConns.push({ id: c.id, host: c.host, port: c.port }));
     if (allConns.length === 0) return;
@@ -351,7 +356,7 @@ export function Sidebar({ onConnect, onConnectMultiple, width }: SidebarProps) {
         return next;
       });
     } catch { /* ignore */ }
-  }, [groups, ungrouped, sharedConnections, healthMonitorEnabled]);
+  }, [groups, sharedGroups, ungrouped, sharedConnections, healthMonitorEnabled]);
 
   const fetchConnections = useCallback(async () => {
     try {
@@ -363,6 +368,7 @@ export function Sidebar({ onConnect, onConnectMultiple, width }: SidebarProps) {
       setGroups(data.groups || []);
       setUngrouped(data.ungrouped || []);
       setSharedConnections(data.sharedConnections || []);
+      setSharedGroups(data.sharedGroups || []);
     } catch { /* ignore */ }
   }, []);
 
@@ -370,14 +376,14 @@ export function Sidebar({ onConnect, onConnectMultiple, width }: SidebarProps) {
 
   useEffect(() => {
     if (!healthMonitorEnabled) { setHealthMap({}); return; }
-    if (groups.length > 0 || ungrouped.length > 0 || sharedConnections.length > 0) {
+    if (groups.length > 0 || sharedGroups.length > 0 || ungrouped.length > 0 || sharedConnections.length > 0) {
       if (skipHealthCheckRef.current) {
         skipHealthCheckRef.current = false;
       } else {
         checkHealth();
       }
     }
-  }, [groups, ungrouped, sharedConnections, checkHealth, healthMonitorEnabled]);
+  }, [groups, sharedGroups, ungrouped, sharedConnections, checkHealth, healthMonitorEnabled]);
 
   useEffect(() => {
     if (!healthMonitorEnabled) return;
@@ -891,10 +897,11 @@ export function Sidebar({ onConnect, onConnectMultiple, width }: SidebarProps) {
     const addTags = (conns: Connection[]) => conns.forEach((c) => c.tags?.forEach((t) => tagSet.add(t)));
     const walkGroups = (gs: ConnectionGroup[]) => gs.forEach((g) => { addTags(g.connections); walkGroups(g.children); });
     walkGroups(groups);
+    walkGroups(sharedGroups);
     addTags(ungrouped);
     addTags(sharedConnections);
     return Array.from(tagSet).sort();
-  }, [groups, ungrouped, sharedConnections]);
+  }, [groups, sharedGroups, ungrouped, sharedConnections]);
 
   function connMatchesFilter(conn: Connection): boolean {
     if (q && !conn.name.toLowerCase().includes(q) && !(conn.host || '').toLowerCase().includes(q)) return false;
@@ -912,6 +919,7 @@ export function Sidebar({ onConnect, onConnectMultiple, width }: SidebarProps) {
 
   const isFiltering = !!q || hasTagFilter;
   const filteredGroups = isFiltering ? groups.map(filterGroup).filter(Boolean) as ConnectionGroup[] : groups;
+  const filteredSharedGroups = isFiltering ? sharedGroups.map(filterGroup).filter(Boolean) as ConnectionGroup[] : sharedGroups;
   const filteredUngrouped = ungrouped.filter(connMatchesFilter);
   const filteredShared = sharedConnections.filter(connMatchesFilter);
 
@@ -952,14 +960,14 @@ export function Sidebar({ onConnect, onConnectMultiple, width }: SidebarProps) {
     );
   }
 
-  function renderGroup(group: ConnectionGroup, depth = 0) {
+  function renderGroup(group: ConnectionGroup, depth = 0, readOnly = false) {
     const expanded = isFiltering ? true : expandedGroups.has(group.id);
     const isDraggingThisGroup = draggingGroupId === group.id;
     const isInvalidDropTarget = draggingGroupId !== null &&
       isAncestorOrSelf(group.id, draggingGroupId, groups);
-    const indicator = dropIndicator?.id === group.id && !isInvalidDropTarget ? dropIndicator.position : null;
+    const indicator = !readOnly && dropIndicator?.id === group.id && !isInvalidDropTarget ? dropIndicator.position : null;
     // Legacy connection-drag highlight
-    const isConnDropTarget = draggingConnId !== null && dragOverId === group.id;
+    const isConnDropTarget = !readOnly && draggingConnId !== null && dragOverId === group.id;
     const totalCount = countConnections(group);
 
     return (
@@ -970,14 +978,14 @@ export function Sidebar({ onConnect, onConnectMultiple, width }: SidebarProps) {
           <div className="absolute top-0 left-2 right-2 h-0.5 bg-accent rounded-full -translate-y-px z-20 pointer-events-none" />
         )}
         <div
-          draggable
-          onDragStart={(e) => {
+          draggable={!readOnly}
+          onDragStart={readOnly ? undefined : (e) => {
             e.stopPropagation();
             setDraggingGroupId(group.id);
             setDraggingConnId(null);
             e.dataTransfer.effectAllowed = 'move';
           }}
-          onDragEnd={handleDragEnd}
+          onDragEnd={readOnly ? undefined : handleDragEnd}
           className={clsx(
             'flex items-center gap-1.5 px-3 py-1.5 text-sm rounded mx-1 cursor-pointer group/folder',
             indicator === 'inside' || isConnDropTarget
@@ -985,12 +993,12 @@ export function Sidebar({ onConnect, onConnectMultiple, width }: SidebarProps) {
               : 'hover:bg-surface-hover',
           )}
           onClick={() => toggleGroup(group.id)}
-          onContextMenu={(e) => {
+          onContextMenu={readOnly ? undefined : (e) => {
             e.preventDefault();
             e.stopPropagation();
             setFolderContextMenu({ x: e.clientX, y: e.clientY, group });
           }}
-          onDragOver={(e) => {
+          onDragOver={readOnly ? undefined : (e) => {
             e.preventDefault();
             e.stopPropagation();
             if (!isInvalidDropTarget) {
@@ -1005,13 +1013,13 @@ export function Sidebar({ onConnect, onConnectMultiple, width }: SidebarProps) {
               }
             }
           }}
-          onDragLeave={(e) => {
+          onDragLeave={readOnly ? undefined : (e) => {
             e.stopPropagation();
             if (e.currentTarget.contains(e.relatedTarget as Node)) return;
             setDragOverId(null);
             setDropIndicator(null);
           }}
-          onDrop={(e) => handleGroupDrop(e, group.id)}
+          onDrop={readOnly ? undefined : (e) => handleGroupDrop(e, group.id)}
         >
           <svg
             width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"
@@ -1020,7 +1028,7 @@ export function Sidebar({ onConnect, onConnectMultiple, width }: SidebarProps) {
             <path d="M9 18l6-6-6-6" />
           </svg>
           <FolderIcon />
-          {renamingGroupId === group.id ? (
+          {!readOnly && renamingGroupId === group.id ? (
             <input
               autoFocus
               value={renameValue}
@@ -1037,13 +1045,15 @@ export function Sidebar({ onConnect, onConnectMultiple, width }: SidebarProps) {
             <span className="text-text-secondary font-medium truncate flex-1">{group.name}</span>
           )}
           <span className="text-xs text-text-secondary mr-1">{totalCount}</span>
-          <button
-            onClick={(e) => { e.stopPropagation(); requestDeleteGroup(group); }}
-            title="Delete folder"
-            className={isMobile ? 'flex p-1 rounded text-text-secondary hover:text-red-400 hover:bg-surface' : 'hidden group-hover/folder:flex p-1 rounded text-text-secondary hover:text-red-400 hover:bg-surface'}
-          >
-            <TrashIcon size={11} />
-          </button>
+          {!readOnly && (
+            <button
+              onClick={(e) => { e.stopPropagation(); requestDeleteGroup(group); }}
+              title="Delete folder"
+              className={isMobile ? 'flex p-1 rounded text-text-secondary hover:text-red-400 hover:bg-surface' : 'hidden group-hover/folder:flex p-1 rounded text-text-secondary hover:text-red-400 hover:bg-surface'}
+            >
+              <TrashIcon size={11} />
+            </button>
+          )}
         </div>
         {/* Insert-after: absolute so it has zero layout impact */}
         {indicator === 'after' && (
@@ -1053,23 +1063,23 @@ export function Sidebar({ onConnect, onConnectMultiple, width }: SidebarProps) {
         {expanded && (
           <div
             className="ml-3 border-l border-border/40 pl-1"
-            onDragOver={(e) => {
+            onDragOver={readOnly ? undefined : (e) => {
               if (draggingConnId) {
                 e.preventDefault();
                 e.stopPropagation();
                 setDragOverId(group.id);
               }
             }}
-            onDragLeave={(e) => {
+            onDragLeave={readOnly ? undefined : (e) => {
               if (!e.currentTarget.contains(e.relatedTarget as Node))
                 setDragOverId(null);
             }}
-            onDrop={(e) => {
+            onDrop={readOnly ? undefined : (e) => {
               if (draggingConnId) handleGroupDrop(e, group.id);
             }}
           >
             {group.connections.map(renderConnection)}
-            {group.children.map(g => renderGroup(g, depth + 1))}
+            {group.children.map(g => renderGroup(g, depth + 1, readOnly))}
             {inlineNewGroup?.parentId === group.id && renderInlineNewFolder()}
             {group.connections.length === 0 && group.children.length === 0 && !inlineNewGroup && (
               <p className="text-xs text-text-secondary px-3 py-1 italic">Empty folder</p>
@@ -1267,7 +1277,7 @@ export function Sidebar({ onConnect, onConnectMultiple, width }: SidebarProps) {
           {filteredGroups.map(g => renderGroup(g))}
           {filteredUngrouped.map(renderConnection)}
 
-          {filteredShared.length > 0 && (
+          {(filteredSharedGroups.length > 0 || filteredShared.length > 0) && (
             <div className="mt-2">
               <div className="flex items-center gap-1.5 px-3 py-1 text-xs text-text-secondary font-medium uppercase tracking-wider">
                 <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
@@ -1277,6 +1287,7 @@ export function Sidebar({ onConnect, onConnectMultiple, width }: SidebarProps) {
                 </svg>
                 Shared
               </div>
+              {filteredSharedGroups.map(g => renderGroup(g, 0, true))}
               {filteredShared.map((conn) => (
                 <div
                   key={conn.id}
@@ -1305,13 +1316,13 @@ export function Sidebar({ onConnect, onConnectMultiple, width }: SidebarProps) {
             </p>
           )}
 
-          {groups.length === 0 && ungrouped.length === 0 && sharedConnections.length === 0 && (
+          {groups.length === 0 && ungrouped.length === 0 && sharedConnections.length === 0 && sharedGroups.length === 0 && (
             <p className="text-xs text-text-secondary text-center px-4 mt-8 leading-relaxed">
               No connections yet.<br />
               Click "+ New Connection" to get started.
             </p>
           )}
-          {isFiltering && filteredGroups.length === 0 && filteredUngrouped.length === 0 && filteredShared.length === 0 && (
+          {isFiltering && filteredGroups.length === 0 && filteredUngrouped.length === 0 && filteredShared.length === 0 && filteredSharedGroups.length === 0 && (
             <p className="text-xs text-text-secondary text-center px-4 mt-8 leading-relaxed">
               No connections match the current filter.
             </p>
@@ -1666,6 +1677,19 @@ export function Sidebar({ onConnect, onConnectMultiple, width }: SidebarProps) {
             <PenIcon />
             Rename
           </button>
+          {canShareFolders && (
+            <button
+              className="w-full px-3 py-1.5 text-left hover:bg-surface-hover text-text-primary flex items-center gap-2"
+              onClick={() => { setShareFolderTarget(folderContextMenu.group); setFolderContextMenu(null); }}
+            >
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <path d="M4 12v8a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-8" />
+                <polyline points="16 6 12 2 8 6" />
+                <line x1="12" y1="2" x2="12" y2="15" />
+              </svg>
+              Share Folder
+            </button>
+          )}
           <button
             className="w-full px-3 py-1.5 text-left hover:bg-surface-hover text-red-400 flex items-center gap-2"
             onClick={() => { requestDeleteGroup(folderContextMenu.group); setFolderContextMenu(null); }}
@@ -1674,6 +1698,14 @@ export function Sidebar({ onConnect, onConnectMultiple, width }: SidebarProps) {
             Delete Folder
           </button>
         </div>
+      )}
+
+      {shareFolderTarget && (
+        <FolderShareModal
+          groupId={shareFolderTarget.id}
+          groupName={shareFolderTarget.name}
+          onClose={() => setShareFolderTarget(null)}
+        />
       )}
     </>
   );

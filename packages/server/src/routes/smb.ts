@@ -5,6 +5,7 @@ import { decrypt } from '../services/encryption.js';
 import { logAudit } from '../services/audit.js';
 import { logFileSessionEvent } from '../services/fileSession.js';
 import { resolveClientIp } from '../services/ip.js';
+import { connectionAccessWhere } from '../services/permissions.js';
 import { patchSmbNtlm } from '../services/smbPatch.js';
 import SMB2 from '@marsaud/smb2';
 
@@ -30,11 +31,12 @@ interface ConnRow {
 }
 
 async function getConn(connectionId: string, userId: string, role: string): Promise<ConnRow | null> {
+  const access = connectionAccessWhere('connections', userId, role);
   const conn = queryOne<ConnRow>(
     `SELECT id, host, port, username, encrypted_password, extra_config_json, user_id, shared
      FROM connections
-     WHERE id = ? AND (user_id = ? OR shared = 1 OR id IN (SELECT cs.connection_id FROM connection_shares cs WHERE (cs.share_type = 'user' AND cs.target_id = ?) OR (cs.share_type = 'role' AND cs.target_id = ?))) AND protocol = 'smb'`,
-    [connectionId, userId, userId, role],
+     WHERE id = ? AND ${access.where} AND protocol = 'smb'`,
+    [connectionId, ...access.params],
   );
   return conn ?? null;
 }

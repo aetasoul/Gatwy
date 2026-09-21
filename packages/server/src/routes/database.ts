@@ -2,7 +2,7 @@ import { Router, type Request, type Response } from 'express';
 import { queryOne, queryAll, execute } from '../db/helpers.js';
 import { authRequired } from '../middleware/auth.js';
 import { logAudit } from '../services/audit.js';
-import { roleHasPermission } from '../services/permissions.js';
+import { roleHasPermission, connectionAccessWhere } from '../services/permissions.js';
 import { getPool, releasePool } from '../services/dbPool.js';
 import { startDbSession, endDbSession, recordDbEvent } from '../services/dbSession.js';
 import { v4 as uuid } from 'uuid';
@@ -21,15 +21,12 @@ interface ConnRow {
   shared: number;
 }
 
-function canAccessWhere(): string {
-  return `(c.user_id = ? OR c.shared = 1 OR c.id IN (SELECT cs.connection_id FROM connection_shares cs WHERE (cs.share_type = 'user' AND cs.target_id = ?) OR (cs.share_type = 'role' AND cs.target_id = ?)))`;
-}
-
 function getConn(connectionId: string, req: Request): ConnRow | undefined {
+  const access = connectionAccessWhere('c', req.user!.userId, req.user!.role);
   return queryOne<ConnRow>(
     `SELECT c.id, c.protocol, c.user_id, c.shared FROM connections c
-     WHERE c.id = ? AND c.protocol IN ('postgres','mysql') AND ${canAccessWhere()}`,
-    [connectionId, req.user!.userId, req.user!.userId, req.user!.role],
+     WHERE c.id = ? AND c.protocol IN ('postgres','mysql') AND ${access.where}`,
+    [connectionId, ...access.params],
   );
 }
 
