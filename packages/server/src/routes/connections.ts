@@ -712,6 +712,17 @@ router.post('/groups', (req: Request, res: Response) => {
     return;
   }
 
+  // A group can only be nested under a folder its creator owns — otherwise it could be
+  // grafted onto a folder shared to the creator, surfacing it (and everything inside) to
+  // everyone that folder is shared with.
+  if (parentId) {
+    const parentGroup = queryOne<{ user_id: string }>('SELECT user_id FROM connection_groups WHERE id = ?', [parentId]);
+    if (!parentGroup || parentGroup.user_id !== userId) {
+      res.status(400).json({ error: 'Invalid parent folder' });
+      return;
+    }
+  }
+
   const id = uuid();
   execute(
     'INSERT INTO connection_groups (id, user_id, name, parent_id, sort_order) VALUES (?, ?, ?, ?, ?)',
@@ -731,6 +742,17 @@ router.put('/groups/:id', (req: Request, res: Response) => {
   );
   if (!group) { res.status(404).json({ error: 'Group not found' }); return; }
   if (group.user_id !== userId && !userCan(req, 'connections.edit_any')) { res.status(403).json({ error: 'Not authorized' }); return; }
+
+  // A group's parent must belong to the same owner as the group itself — not the caller —
+  // otherwise an `edit_any` admin reparenting someone else's group under their own folder
+  // (or the owner reparenting under a folder shared to them) grafts it into that share.
+  if (parentId) {
+    const parentGroup = queryOne<{ user_id: string }>('SELECT user_id FROM connection_groups WHERE id = ?', [parentId]);
+    if (!parentGroup || parentGroup.user_id !== group.user_id) {
+      res.status(400).json({ error: 'Invalid parent folder' });
+      return;
+    }
+  }
 
   const updates: string[] = [];
   const params: unknown[] = [];

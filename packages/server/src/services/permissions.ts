@@ -127,9 +127,10 @@ export function accessibleSharedGroupIds(userId: string, role: string): string[]
   );
   if (directRows.length === 0) return [];
 
-  const allGroups = queryAll<{ id: string; parent_id: string | null }>(
-    'SELECT id, parent_id FROM connection_groups',
+  const allGroups = queryAll<{ id: string; parent_id: string | null; user_id: string }>(
+    'SELECT id, parent_id, user_id FROM connection_groups',
   );
+  const ownerOf = new Map(allGroups.map((g) => [g.id, g.user_id]));
   const childrenOf = new Map<string, string[]>();
   for (const g of allGroups) {
     if (!g.parent_id) continue;
@@ -138,13 +139,18 @@ export function accessibleSharedGroupIds(userId: string, role: string): string[]
     childrenOf.set(g.parent_id, list);
   }
 
+  // Only descend into a child whose owner matches its parent's owner — a group grafted
+  // (via parent_id) under someone else's folder must never inherit that folder's share.
   const result = new Set<string>();
   const queue = directRows.map((r) => r.group_id);
   while (queue.length > 0) {
     const gid = queue.pop()!;
     if (result.has(gid)) continue;
     result.add(gid);
-    for (const child of childrenOf.get(gid) ?? []) queue.push(child);
+    const owner = ownerOf.get(gid);
+    for (const child of childrenOf.get(gid) ?? []) {
+      if (ownerOf.get(child) === owner) queue.push(child);
+    }
   }
   return [...result];
 }
