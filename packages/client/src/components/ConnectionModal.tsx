@@ -1,6 +1,8 @@
 import { useRef, useState, useEffect, type ReactNode, type FormEvent } from 'react';
 import { type Protocol } from '../types/protocol.js';
 import { pointerScaleToPercent } from '../lib/vncPointerMap';
+import { credentialTypesFor, fetchCredentials, type CredentialSummary } from '../lib/credentials';
+import { useAuth } from '../hooks/useAuth';
 
 const TagRemoveIcon = () => (
   <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round">
@@ -36,6 +38,7 @@ export interface ConnectionPrefill {
   smbDomain: string;
   tunnels: TunnelDef[];
   vncDesktopScale?: string;
+  credentialId?: string;
 }
 
 interface ConnectionModalProps {
@@ -239,7 +242,30 @@ export function ConnectionModal({ connection, groups, onClose, onSaved, prefill,
   const [selectedShareUsers, setSelectedShareUsers] = useState<string[]>([]);
   const [skipCertValidation, setSkipCertValidation] = useState(true);
   const [promptOnConnect, setPromptOnConnect] = useState(false);
+  const { user } = useAuth();
+  const canShareCredentials = !!user?.permissions.includes('credentials.share');
+  const [library, setLibrary] = useState<CredentialSummary[]>([]);
+  const [credentialId, setCredentialId] = useState(prefill?.credentialId ?? '');
+  const [saveToLibrary, setSaveToLibrary] = useState(false);
+  const [libraryName, setLibraryName] = useState('');
   const newFolderInputRef = useRef<HTMLInputElement>(null);
+
+  const isSharedConn = shared || selectedShareRoles.length > 0 || selectedShareUsers.length > 0;
+  const allowedCredTypes = credentialTypesFor(protocol);
+  const selectedCred = library.find((c) => c.id === credentialId) ?? null;
+  // Shared connections may only reference shared credentials.
+  const pickableCreds = library.filter((c) => allowedCredTypes.includes(c.type) && (!isSharedConn || c.shared));
+  const credentialProblem = credentialId && !selectedCred
+    ? 'The linked credential is no longer available — pick another or enter credentials manually.'
+    : selectedCred && !allowedCredTypes.includes(selectedCred.type)
+      ? `${protocol.toUpperCase()} connections can't use SSH key credentials.`
+      : selectedCred && isSharedConn && !selectedCred.shared
+        ? 'Shared connections can only use shared credentials.'
+        : '';
+
+  useEffect(() => {
+    fetchCredentials().then(setLibrary).catch(() => {});
+  }, []);
 
   // Load full details when editing an existing connection
   useEffect(() => {
@@ -248,6 +274,7 @@ export function ConnectionModal({ connection, groups, onClose, onSaved, prefill,
       .then((r) => r.json())
       .then((d) => {
         if (d.username) setUsername(d.username);
+        if (d.credentialId) setCredentialId(d.credentialId as string);
         if (d.tunnels) setTunnels(d.tunnels.map((t: Omit<TunnelDef, 'id'> & { localPort: number; remotePort: number }) => ({
           id: crypto.randomUUID(),
           localPort: String(t.localPort),
@@ -318,28 +345,56 @@ export function ConnectionModal({ connection, groups, onClose, onSaved, prefill,
   async function handleSubmit(e: FormEvent) {
     e.preventDefault();
     setError('');
+    if (credentialProblem) { setError(credentialProblem); return; }
     setSaving(true);
     try {
+      // Optionally save manually entered credentials to the library, then link them.
+      let linkedCredentialId = credentialId;
+      const usesManualSecret = protocol !== 'moonlight' && !(protocol === 'ssh' && promptOnConnect);
+      if (!linkedCredentialId && saveToLibrary && usesManualSecret) {
+        const isKey = protocol === 'ssh' && !!privateKey.trim();
+        const credRes = await fetch('/api/v1/credentials', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'include',
+          body: JSON.stringify({
+            name: libraryName.trim() || `${username || 'credential'}@${host}`,
+            type: isKey ? 'key' : 'password',
+            username,
+            ...(isKey ? { privateKey } : { password }),
+            shared: isSharedConn,
+          }),
+        });
+        const credData = await credRes.json().catch(() => ({}));
+        if (!credRes.ok) throw new Error(credData.error || `Could not save credential (${credRes.status})`);
+        linkedCredentialId = credData.id as string;
+      }
+
       const tunnelsClean = tunnels.filter((t) => t.localPort && t.remoteHost && t.remotePort);
       const body: Record<string, unknown> = {
         name,
         protocol,
         host,
         port,
-        username,
         groupId: groupId || null,
         shared,
-        ...(protocol === 'ssh' && privateKey ? { privateKey } : {}),
       };
-      // Only include password if the user typed one and not using prompt-on-connect
-      if (password && !(protocol === 'ssh' && promptOnConnect)) body.password = password;
+      if (linkedCredentialId && protocol !== 'moonlight') {
+        body.credentialId = linkedCredentialId;
+      } else {
+        if (connection) body.credentialId = null;
+        body.username = username;
+        if (protocol === 'ssh' && privateKey) body.privateKey = privateKey;
+        // Only include password if the user typed one and not using prompt-on-connect
+        if (password && !(protocol === 'ssh' && promptOnConnect)) body.password = password;
+      }
       if (protocol === 'ssh') {
         body.tunnels = tunnelsClean.map(({ localPort, remoteHost, remotePort }) => ({
           localPort: parseInt(localPort, 10),
           remoteHost,
           remotePort: parseInt(remotePort, 10),
         }));
-        body.extraConfig = promptOnConnect ? { promptOnConnect: true } : null;
+        body.extraConfig = promptOnConnect && !body.credentialId ? { promptOnConnect: true } : null;
       }
       if (protocol === 'smb') {
         body.extraConfig = { share: smbShare.trim(), ...(smbDomain.trim() ? { domain: smbDomain.trim() } : {}) };
@@ -400,12 +455,16 @@ export function ConnectionModal({ connection, groups, onClose, onSaved, prefill,
           ...selectedShareRoles.map(id => ({ shareType: 'role', targetId: id })),
           ...selectedShareUsers.map(id => ({ shareType: 'user', targetId: id })),
         ];
-        await fetch(`/api/v1/connections/${connId}/shares`, {
+        const shareRes = await fetch(`/api/v1/connections/${connId}/shares`, {
           method: 'PUT',
           headers: { 'Content-Type': 'application/json' },
           credentials: 'include',
           body: JSON.stringify({ shares }),
         });
+        if (!shareRes.ok) {
+          const data = await shareRes.json().catch(() => ({}));
+          throw new Error(data.error || `Could not save sharing (${shareRes.status})`);
+        }
       } else if (connId && connection) {
         await fetch(`/api/v1/connections/${connId}/shares`, {
           method: 'PUT',
@@ -519,6 +578,45 @@ export function ConnectionModal({ connection, groups, onClose, onSaved, prefill,
           )}
 
           {protocol !== 'moonlight' && (
+            <div>
+              <label className="block text-xs font-medium text-text-secondary mb-1">Credentials</label>
+              <select
+                value={credentialId}
+                onChange={(e) => setCredentialId(e.target.value)}
+                className="w-full px-2.5 py-1.5 bg-surface border border-border rounded text-sm text-text-primary focus:outline-hidden focus:ring-2 focus:ring-accent"
+              >
+                <option value="">Enter manually</option>
+                {selectedCred && !pickableCreds.includes(selectedCred) && (
+                  <option value={selectedCred.id}>{selectedCred.name} (not allowed here)</option>
+                )}
+                {credentialId && !selectedCred && <option value={credentialId}>(unavailable credential)</option>}
+                {pickableCreds.length > 0 && (
+                  <optgroup label="Credential library">
+                    {pickableCreds.map((c) => (
+                      <option key={c.id} value={c.id}>
+                        {c.name}{c.username ? ` — ${c.username}` : ''}{c.type === 'key' ? ' (key)' : ''}{c.shared ? ' · shared' : ''}
+                      </option>
+                    ))}
+                  </optgroup>
+                )}
+              </select>
+              {credentialProblem ? (
+                <p className="text-[11px] text-red-400 mt-1 leading-tight">{credentialProblem}</p>
+              ) : selectedCred ? (
+                <p className="text-[11px] text-text-secondary mt-1 leading-tight">
+                  Signs in as <span className="font-mono text-text-primary">{selectedCred.username || '(no username)'}</span>
+                  {' '}with {selectedCred.type === 'key' ? 'an SSH key' : selectedCred.hasPassword ? 'a saved password' : 'no password'}.
+                  {' '}Manage in Settings → Credentials.
+                </p>
+              ) : isSharedConn && library.some((c) => !c.shared && allowedCredTypes.includes(c.type)) ? (
+                <p className="text-[11px] text-text-secondary mt-1 leading-tight">
+                  Private credentials are hidden because this connection is shared.
+                </p>
+              ) : null}
+            </div>
+          )}
+
+          {protocol !== 'moonlight' && !credentialId && (
           <div className="flex gap-2">
             <div className="flex-1">
               <label className="block text-xs font-medium text-text-secondary mb-1">Username</label>
@@ -544,7 +642,7 @@ export function ConnectionModal({ connection, groups, onClose, onSaved, prefill,
           </div>
           )}
 
-          {protocol === 'ssh' && (
+          {protocol === 'ssh' && !credentialId && (
             <div>
               <label className="block text-xs font-medium text-text-secondary mb-1">
                 Private Key <span className="font-normal">(optional, overrides password)</span>
@@ -559,7 +657,31 @@ export function ConnectionModal({ connection, groups, onClose, onSaved, prefill,
             </div>
           )}
 
-          {protocol === 'ssh' && (
+          {protocol !== 'moonlight' && !credentialId && !(protocol === 'ssh' && promptOnConnect) && (password || privateKey)
+            && (!isSharedConn || canShareCredentials) && (
+            <div className="flex items-center gap-2">
+              <label className="flex items-center gap-2 cursor-pointer shrink-0">
+                <input
+                  type="checkbox"
+                  checked={saveToLibrary}
+                  onChange={(e) => setSaveToLibrary(e.target.checked)}
+                  className="accent-accent"
+                />
+                <span className="text-xs text-text-secondary">Save to credential library</span>
+              </label>
+              {saveToLibrary && (
+                <input
+                  type="text"
+                  value={libraryName}
+                  onChange={(e) => setLibraryName(e.target.value)}
+                  placeholder={`${username || 'credential'}@${host || 'host'}`}
+                  className="flex-1 min-w-0 px-2 py-1 bg-surface border border-border rounded text-xs text-text-primary focus:outline-hidden focus:ring-1 focus:ring-accent"
+                />
+              )}
+            </div>
+          )}
+
+          {protocol === 'ssh' && !credentialId && (
             <div
               className={`flex items-center gap-2.5 px-3 py-2 rounded border cursor-pointer transition-colors ${
                 promptOnConnect
