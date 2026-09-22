@@ -2,6 +2,7 @@ import pg from 'pg';
 import mysql from 'mysql2/promise';
 import { queryOne } from '../db/helpers.js';
 import { decrypt } from './encryption.js';
+import { applyCredential } from './credentials.js';
 import { getSetting } from './settings.js';
 
 interface ConnRow {
@@ -12,6 +13,8 @@ interface ConnRow {
   encrypted_password: string | null;
   protocol: 'postgres' | 'mysql';
   extra_config_json: string | null;
+  user_id: string;
+  credential_id: string | null;
 }
 
 interface DbExtraConfig {
@@ -79,12 +82,13 @@ export async function getPool(connectionId: string): Promise<PoolWrapper> {
     return existing;
   }
 
-  const conn = queryOne<ConnRow>(
-    `SELECT id, host, port, username, encrypted_password, protocol, extra_config_json
+  const row = queryOne<ConnRow>(
+    `SELECT id, host, port, username, encrypted_password, protocol, extra_config_json, user_id, credential_id
      FROM connections WHERE id = ?`,
     [connectionId],
   );
-  if (!conn) throw new Error('Connection not found');
+  if (!row) throw new Error('Connection not found');
+  const conn = applyCredential(row, null);
   if (conn.protocol !== 'postgres' && conn.protocol !== 'mysql') {
     throw new Error(`Protocol '${conn.protocol}' is not a database protocol`);
   }

@@ -513,6 +513,7 @@ export function Sidebar({ onConnect, onConnectMultiple, width }: SidebarProps) {
         host: conn.host,
         port: conn.port,
         username: d.username ?? '',
+        credentialId: d.credentialId ?? undefined,
         groupId: conn.groupId,
         shared: d.shared === 1,
         smbShare: d.extraConfig?.share ?? '',

@@ -5,6 +5,7 @@ import { queryAll, queryOne, execute } from '../db/helpers.js';
 import { authRequired, userCan } from '../middleware/auth.js';
 import { encrypt, decrypt } from '../services/encryption.js';
 import { logAudit } from '../services/audit.js';
+import { applyCredential, checkCredentialAssignable, isConnectionShared } from '../services/credentials.js';
 import { prepareKey } from '../services/sshKeys.js';
 import { filterListedConnections, isMoonlightWebAvailable, runtimeFeatures } from '../services/moonlightWeb.js';
 
@@ -20,9 +21,9 @@ const router = Router();
 router.use(authRequired);
 
 /**
- * Prepare a private key for storage: PKCS#8 keys are converted to a format
- * ssh2 reads. Returns the key to store (null when none was given), or an
- * error message — connections have nowhere to keep a key passphrase.
+ * Prepare an inline (passphrase-less) private key for storage — PKCS#8 keys are
+ * converted to a format ssh2 reads. Returns the key to store (null when none
+ * was given), or an error message.
  */
 function prepareInlineKey(privateKey: unknown): { key: string | null } | { error: string } {
   if (typeof privateKey !== 'string' || !privateKey.trim()) return { key: null };
@@ -30,7 +31,7 @@ function prepareInlineKey(privateKey: unknown): { key: string | null } | { error
   if ('error' in prepared) {
     return {
       error: /passphrase/i.test(prepared.error)
-        ? 'This private key is encrypted. Connections can\'t store a key passphrase — use a key without one.'
+        ? 'This private key is encrypted. Connections can\'t store a key passphrase — save the key with its passphrase in Settings → Credentials and select it here.'
         : prepared.error,
     };
   }
@@ -55,6 +56,7 @@ interface ConnectionRow {
   extra_config_json: string | null;
   tags: string | null;
   skip_cert_validation: number;
+  credential_id: string | null;
 }
 
 interface GroupRow {
@@ -302,7 +304,7 @@ router.post('/', (req: Request, res: Response) => {
     return;
   }
 
-  const { name, protocol, host, port, username, password, groupId, privateKey, extraConfig, shared, tunnels, tags, skipCertValidation } = req.body;
+  const { name, protocol, host, port, username, password, groupId, privateKey, extraConfig, shared, tunnels, tags, skipCertValidation, credentialId } = req.body;
 
   if (!name || !protocol || !host || !port) {
     res.status(400).json({ error: 'Name, protocol, host, and port are required' });
@@ -327,24 +329,31 @@ router.post('/', (req: Request, res: Response) => {
     }
   }
 
-  const id = uuid();
-  const encryptedPassword = password ? encrypt(password) : null;
-  const inlineKey = prepareInlineKey(privateKey);
+  if (credentialId) {
+    const err = checkCredentialAssignable(credentialId, userId, !!shared, userCan(req, 'credentials.use_shared'));
+    if (err) { res.status(400).json({ error: err }); return; }
+  }
+  const inlineKey = credentialId ? { key: null } : prepareInlineKey(privateKey);
   if ('error' in inlineKey) { res.status(400).json({ error: inlineKey.error }); return; }
+
+  const id = uuid();
+  // A linked library credential replaces inline credentials entirely.
+  const encryptedPassword = !credentialId && password ? encrypt(password) : null;
   const encryptedKey = inlineKey.key ? encrypt(inlineKey.key) : null;
   const tagsStr = Array.isArray(tags) ? JSON.stringify(tags.map((t: string) => t.trim()).filter(Boolean)) : null;
 
   execute(
-    `INSERT INTO connections (id, user_id, group_id, name, protocol, host, port, username, encrypted_password, private_key, extra_config_json, sort_order, shared, tunnels_json, tags, skip_cert_validation)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    `INSERT INTO connections (id, user_id, group_id, name, protocol, host, port, username, encrypted_password, private_key, extra_config_json, sort_order, shared, tunnels_json, tags, skip_cert_validation, credential_id)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       id, userId, groupId || null, name, protocol, host, port,
-      username || null, encryptedPassword, encryptedKey,
+      credentialId ? null : (username || null), encryptedPassword, encryptedKey,
       extraConfig ? JSON.stringify(extraConfig) : null, 0,
       shared ? 1 : 0,
       tunnels ? JSON.stringify(tunnels) : null,
       tagsStr,
       skipCertValidation ? 1 : 0,
+      credentialId || null,
     ],
   );
 
@@ -393,10 +402,11 @@ router.put('/:id', (req: Request, res: Response) => {
     user_id: string;
     shared: number;
     extra_config_json: string | null;
+    credential_id: string | null;
   }
 
   const existing = queryOne<ExistingConnectionRow>(
-    'SELECT id, name, protocol, host, port, username, group_id, user_id, shared, extra_config_json FROM connections WHERE id = ?',
+    'SELECT id, name, protocol, host, port, username, group_id, user_id, shared, extra_config_json, credential_id FROM connections WHERE id = ?',
     [id],
   );
   if (!existing) {
@@ -429,12 +439,23 @@ router.put('/:id', (req: Request, res: Response) => {
     groupId: existing.group_id,
   };
 
-  const { name, protocol, host, port, username, password, groupId, privateKey, shared, tunnels, extraConfig, tags, skipCertValidation } = req.body;
+  const { name, protocol, host, port, username, password, groupId, privateKey, shared, tunnels, extraConfig, tags, skipCertValidation, credentialId } = req.body;
 
   if (protocol !== undefined && !createProtocols().includes(protocol)) {
     res.status(400).json({ error: 'Invalid protocol' });
     return;
   }
+
+  // Validate the credential the connection will use after this update — a newly
+  // linked one, or the existing one if the connection is becoming shared.
+  const nextCredentialId: string | null = credentialId !== undefined ? (credentialId || null) : existing.credential_id;
+  if (nextCredentialId && (credentialId !== undefined || shared !== undefined)) {
+    const nextShared = isConnectionShared(id, shared !== undefined ? !!shared : existing.shared);
+    const err = checkCredentialAssignable(nextCredentialId, existing.user_id, nextShared, userCan(req, 'credentials.use_shared'));
+    if (err) { res.status(400).json({ error: err }); return; }
+  }
+  const inlineKey = nextCredentialId ? { key: null } : prepareInlineKey(privateKey);
+  if ('error' in inlineKey) { res.status(400).json({ error: inlineKey.error }); return; }
 
   // Validate VNC pointer scale on update
   if (extraConfig && (protocol === 'vnc' || (!protocol && existing.protocol === 'vnc'))) {
@@ -456,12 +477,14 @@ router.put('/:id', (req: Request, res: Response) => {
   if (protocol !== undefined) { updates.push('protocol = ?'); params.push(protocol); }
   if (host !== undefined) { updates.push('host = ?'); params.push(host); }
   if (port !== undefined) { updates.push('port = ?'); params.push(port); }
-  if (username !== undefined) { updates.push('username = ?'); params.push(username || null); }
-  if (password) { updates.push('encrypted_password = ?'); params.push(encrypt(password)); }
-  if (privateKey !== undefined) {
-    const inlineKey = prepareInlineKey(privateKey);
-    if ('error' in inlineKey) { res.status(400).json({ error: inlineKey.error }); return; }
-    updates.push('private_key = ?'); params.push(inlineKey.key ? encrypt(inlineKey.key) : null);
+  if (credentialId !== undefined) { updates.push('credential_id = ?'); params.push(credentialId || null); }
+  if (nextCredentialId) {
+    // Linked to a library credential: drop any inline credentials.
+    if (credentialId) updates.push('username = NULL', 'encrypted_password = NULL', 'private_key = NULL');
+  } else {
+    if (username !== undefined) { updates.push('username = ?'); params.push(username || null); }
+    if (password) { updates.push('encrypted_password = ?'); params.push(encrypt(password)); }
+    if (privateKey !== undefined) { updates.push('private_key = ?'); params.push(inlineKey.key ? encrypt(inlineKey.key) : null); }
   }
   if (groupId !== undefined) { updates.push('group_id = ?'); params.push(groupId || null); }
   if (shared !== undefined) { updates.push('shared = ?'); params.push(shared ? 1 : 0); }
@@ -597,6 +620,7 @@ router.get('/:id', (req: Request, res: Response) => {
     recordingEnabled: conn.recording_enabled,
     hasPassword: !!conn.encrypted_password,
     hasPrivateKey: !!conn.private_key,
+    credentialId: conn.credential_id,
     shared: conn.shared,
     tunnels,
     extraConfig,
@@ -612,19 +636,20 @@ router.get('/:id/session', (req: Request, res: Response) => {
   const id = req.params.id as string;
 
   // Credentials returned to the owner or to users with explicit share access
-  const conn = queryOne<ConnectionRow>(
+  const row = queryOne<ConnectionRow>(
     `SELECT * FROM connections WHERE id = ? AND ${canAccessWhere()}`,
     [id, ...canAccessParams(req)],
   );
 
-  if (!conn) {
+  if (!row) {
     res.status(404).json({ error: 'Connection not found' });
     return;
   }
-  if (conn.protocol === 'moonlight' && !isMoonlightWebAvailable()) {
+  if (row.protocol === 'moonlight' && !isMoonlightWebAvailable()) {
     res.status(404).json({ error: 'Connection not found' });
     return;
   }
+  const conn = applyCredential(row, userId);
 
   const password = conn.encrypted_password ? decrypt(conn.encrypted_password) : '';
 
@@ -774,6 +799,14 @@ router.put('/:id/shares', (req: Request, res: Response) => {
 
   const { shares } = req.body as { shares: { shareType: string; targetId: string }[] };
   if (!Array.isArray(shares)) { res.status(400).json({ error: 'shares array required' }); return; }
+
+  const linked = queryOne<{ user_id: string; credential_id: string | null }>(
+    'SELECT user_id, credential_id FROM connections WHERE id = ?', [id],
+  );
+  if (shares.length > 0 && linked?.credential_id) {
+    const err = checkCredentialAssignable(linked.credential_id, linked.user_id, true, userCan(req, 'credentials.use_shared'));
+    if (err) { res.status(400).json({ error: err }); return; }
+  }
 
   // Replace all
   execute('DELETE FROM connection_shares WHERE connection_id = ?', [id]);
