@@ -5,6 +5,8 @@ import crypto from 'crypto';
 import { queryOne, execute } from '../db/helpers.js';
 import { authRequired, requirePermission } from '../middleware/auth.js';
 import { decrypt } from '../services/encryption.js';
+import { applyCredential } from '../services/credentials.js';
+import { friendlyKeyError, prepareKey } from '../services/sshKeys.js';
 import { logAudit } from '../services/audit.js';
 import { logFileSessionEvent } from '../services/fileSession.js';
 import { resolveClientIp } from '../services/ip.js';
@@ -24,16 +26,19 @@ interface ConnRow {
   user_id: string;
   shared: number;
   host_fingerprint: string | null;
+  credential_id: string | null;
+  encrypted_passphrase?: string | null;
 }
 
 function getConn(connectionId: string, userId: string, role: string): ConnRow | null {
   const access = connectionAccessWhere('connections', userId, role);
-  return queryOne<ConnRow>(
-    `SELECT id, host, port, username, encrypted_password, private_key, user_id, shared, host_fingerprint
+  const conn = queryOne<ConnRow>(
+    `SELECT id, host, port, username, encrypted_password, private_key, user_id, shared, host_fingerprint, credential_id
      FROM connections
      WHERE id = ? AND ${access.where} AND protocol IN ('sftp', 'ssh')`,
     [connectionId, ...access.params],
-  ) ?? null;
+  );
+  return conn ? applyCredential(conn, userId) : null;
 }
 
 function connectSftp(conn: ConnRow): Promise<{ ssh: SshClient; sftp: SFTPWrapper }> {
@@ -42,9 +47,16 @@ function connectSftp(conn: ConnRow): Promise<{ ssh: SshClient; sftp: SFTPWrapper
     const password = conn.encrypted_password
       ? (() => { try { return decrypt(conn.encrypted_password!); } catch { return undefined; } })()
       : undefined;
-    const privateKey = conn.private_key
+    const storedKey = conn.private_key
       ? (() => { try { return decrypt(conn.private_key!); } catch { return undefined; } })()
       : undefined;
+    const storedPassphrase = conn.encrypted_passphrase
+      ? (() => { try { return decrypt(conn.encrypted_passphrase!); } catch { return undefined; } })()
+      : undefined;
+    const preparedKey = storedKey ? prepareKey(storedKey, storedPassphrase) : undefined;
+    if (preparedKey && 'error' in preparedKey) { reject(new Error(preparedKey.error)); return; }
+    const privateKey = preparedKey?.key.privateKey;
+    const passphrase = preparedKey?.key.passphrase;
 
     ssh.on('ready', () => {
       ssh.sftp((err, sftp) => {
@@ -55,21 +67,27 @@ function connectSftp(conn: ConnRow): Promise<{ ssh: SshClient; sftp: SFTPWrapper
 
     ssh.on('error', (err) => reject(err));
 
-    ssh.connect({
-      host: conn.host,
-      port: conn.port || 22,
-      username: conn.username || 'root',
-      ...(privateKey ? { privateKey } : { password }),
-      readyTimeout: 10000,
-      hostVerifier: (key: Buffer) => {
-        const fingerprint = crypto.createHash('sha256').update(key).digest('hex');
-        if (conn.host_fingerprint) {
-          return conn.host_fingerprint === fingerprint;
-        }
-        execute('UPDATE connections SET host_fingerprint = ? WHERE id = ?', [fingerprint, conn.id]);
-        return true;
-      },
-    });
+    try {
+      ssh.connect({
+        host: conn.host,
+        port: conn.port || 22,
+        username: conn.username || 'root',
+        ...(privateKey ? { privateKey, passphrase } : { password }),
+        readyTimeout: 10000,
+        hostVerifier: (key: Buffer) => {
+          const fingerprint = crypto.createHash('sha256').update(key).digest('hex');
+          if (conn.host_fingerprint) {
+            return conn.host_fingerprint === fingerprint;
+          }
+          execute('UPDATE connections SET host_fingerprint = ? WHERE id = ?', [fingerprint, conn.id]);
+          return true;
+        },
+      });
+    } catch (err) {
+      const msg = (err as Error).message;
+      const keyErr = msg.match(/^Cannot parse privateKey: (.*)$/);
+      reject(new Error(keyErr ? friendlyKeyError(keyErr[1]) : msg));
+    }
   });
 }
 

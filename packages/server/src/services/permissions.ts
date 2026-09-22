@@ -4,6 +4,7 @@ import { queryOne, queryAll } from '../db/helpers.js';
 export const ALL_PERMISSIONS = [
   'connections.create', 'connections.edit_own', 'connections.delete_own',
   'connections.edit_any', 'connections.delete_any', 'connections.share', 'connections.import_export',
+  'credentials.share', 'credentials.use_shared',
   'sessions.view_own', 'sessions.view_any', 'sessions.delete',
   'audit.view_own', 'audit.view_any',
   'users.manage', 'settings.manage', 'settings.auth_providers', 'settings.security', 'settings.backup', 'settings.notifications',
@@ -38,6 +39,13 @@ export const PERMISSION_GROUPS: Record<string, { label: string; permissions: { k
       { key: 'connections.delete_any', label: 'Delete any connection' },
       { key: 'connections.share', label: 'Share connections' },
       { key: 'connections.import_export', label: 'Import / Export connections' },
+    ],
+  },
+  credentials: {
+    label: 'Credential Library',
+    permissions: [
+      { key: 'credentials.share', label: 'Create & manage shared credentials' },
+      { key: 'credentials.use_shared', label: 'Use shared credentials in own connections' },
     ],
   },
   sessions: {
