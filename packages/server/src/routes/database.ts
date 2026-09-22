@@ -9,6 +9,7 @@ import { v4 as uuid } from 'uuid';
 
 const router = Router();
 router.use(authRequired);
+router.use('/:connectionId', requireDbPermission);
 
 // ──────────────────────────────────────────────────────────────────────────────
 // Helpers
