@@ -85,6 +85,41 @@ function blockedSharedUpdate(req: Request, sharedValue: unknown, existingShared:
   return next !== existingShared && !userCan(req, 'connections.share');
 }
 
+/** Folder name for an audit log entry — readable in place of a raw group_id, and stable
+ * even if the folder is later renamed (this resolves it at the time of the action). */
+function groupNameForAudit(groupId: string | null): string | null {
+  if (!groupId) return null;
+  const row = queryOne<{ name: string }>('SELECT name FROM connection_groups WHERE id = ?', [groupId]);
+  return row?.name ?? null;
+}
+
+/** Attaches a human-readable targetName (role name or username) to each share entry,
+ * so an audit log entry stays readable instead of just showing raw role/user ids. */
+function resolveShareTargetNames(
+  entries: { shareType: string; targetId: string }[],
+): { shareType: string; targetId: string; targetName: string }[] {
+  const roleIds = entries.filter((e) => e.shareType === 'role').map((e) => e.targetId);
+  const userIds = entries.filter((e) => e.shareType === 'user').map((e) => e.targetId);
+  const roleNames = new Map<string, string>();
+  const userNames = new Map<string, string>();
+  if (roleIds.length > 0) {
+    queryAll<{ id: string; name: string }>(
+      `SELECT id, name FROM roles WHERE id IN (${roleIds.map(() => '?').join(',')})`,
+      roleIds,
+    ).forEach((r) => roleNames.set(r.id, r.name));
+  }
+  if (userIds.length > 0) {
+    queryAll<{ id: string; username: string }>(
+      `SELECT id, username FROM users WHERE id IN (${userIds.map(() => '?').join(',')})`,
+      userIds,
+    ).forEach((u) => userNames.set(u.id, u.username));
+  }
+  return entries.map((e) => ({
+    ...e,
+    targetName: e.shareType === 'role' ? (roleNames.get(e.targetId) ?? e.targetId) : (userNames.get(e.targetId) ?? e.targetId),
+  }));
+}
+
 // List connections and groups
 router.get('/', (req: Request, res: Response) => {
   const userId = req.user!.userId;
@@ -547,7 +582,7 @@ router.put('/:id', (req: Request, res: Response) => {
     host: existing.host,
     port: existing.port,
     username: existing.username,
-    groupId: existing.group_id,
+    folder: groupNameForAudit(existing.group_id),
   };
 
   const { name, protocol, host, port, username, password, groupId, privateKey, shared, tunnels, extraConfig, tags, skipCertValidation, credentialId } = req.body;
@@ -646,13 +681,13 @@ router.put('/:id', (req: Request, res: Response) => {
     host: host !== undefined ? host : before.host,
     port: port !== undefined ? port : before.port,
     username: username !== undefined ? (username || null) : before.username,
-    groupId: groupId !== undefined ? (groupId || null) : before.groupId,
+    folder: groupId !== undefined ? groupNameForAudit(groupId || null) : before.folder,
   };
 
   logAudit({
     userId,
     eventType: 'connection.updated',
-    target: id,
+    target: existing.name,
     details: { before, after },
     ipAddress: req.ip,
   });
@@ -665,7 +700,7 @@ router.delete('/:id', (req: Request, res: Response) => {
   const userId = req.user!.userId;
   const id = req.params.id as string;
 
-  const conn = queryOne<{ user_id: string }>('SELECT user_id FROM connections WHERE id = ?', [id]);
+  const conn = queryOne<{ user_id: string; name: string }>('SELECT user_id, name FROM connections WHERE id = ?', [id]);
   if (!conn) {
     res.status(404).json({ error: 'Connection not found' });
     return;
@@ -687,7 +722,7 @@ router.delete('/:id', (req: Request, res: Response) => {
   logAudit({
     userId,
     eventType: 'connection.deleted',
-    target: id,
+    target: conn.name,
     ipAddress: req.ip,
   });
 
@@ -939,7 +974,7 @@ router.get('/groups/:id/shares', (req: Request, res: Response) => {
 router.put('/groups/:id/shares', (req: Request, res: Response) => {
   const userId = req.user!.userId;
   const id = req.params.id as string;
-  const group = queryOne<{ user_id: string }>('SELECT user_id FROM connection_groups WHERE id = ?', [id]);
+  const group = queryOne<{ user_id: string; name: string }>('SELECT user_id, name FROM connection_groups WHERE id = ?', [id]);
   if (!group) { res.status(404).json({ error: 'Folder not found' }); return; }
   if (group.user_id !== userId && !userCan(req, 'connections.edit_any')) {
     res.status(403).json({ error: 'Not authorized' }); return;
@@ -972,8 +1007,8 @@ router.put('/groups/:id/shares', (req: Request, res: Response) => {
   logAudit({
     userId,
     eventType: 'group.shares_updated',
-    target: id,
-    details: { before, after },
+    target: group.name,
+    details: { before: resolveShareTargetNames(before), after: resolveShareTargetNames(after) },
     ipAddress: req.ip,
   });
 

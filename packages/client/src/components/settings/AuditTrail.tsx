@@ -78,10 +78,46 @@ function DiffView({ before, after }: { before: Record<string, unknown>; after: R
   );
 }
 
+interface ShareEntry { shareType: string; targetId: string; targetName?: string }
+
+/** Renders an added/removed diff for a list of folder/connection shares (e.g.
+ * group.shares_updated) instead of the generic index-keyed object diff, which
+ * is unreadable for arrays (shows "0:", "1:", …). */
+function ShareDiffView({ before, after }: { before: ShareEntry[]; after: ShareEntry[] }) {
+  const key = (s: ShareEntry) => `${s.shareType}:${s.targetId}`;
+  const label = (s: ShareEntry) => `${s.shareType === 'role' ? 'Role' : 'User'}: ${s.targetName ?? s.targetId}`;
+  const beforeKeys = new Set(before.map(key));
+  const afterKeys = new Set(after.map(key));
+  const removed = before.filter((s) => !afterKeys.has(key(s)));
+  const added = after.filter((s) => !beforeKeys.has(key(s)));
+
+  if (removed.length === 0 && added.length === 0) return <span className="text-text-secondary text-xs">No changes detected.</span>;
+
+  return (
+    <div className="grid grid-cols-2 gap-2 text-xs mt-1">
+      <div className="bg-red-500/10 rounded p-2">
+        <div className="text-red-400 font-sans font-medium mb-1 not-italic">Removed</div>
+        {removed.length === 0
+          ? <span className="text-text-secondary italic">None</span>
+          : removed.map((s) => <div key={key(s)} className="text-red-300">{label(s)}</div>)}
+      </div>
+      <div className="bg-green-500/10 rounded p-2">
+        <div className="text-green-400 font-sans font-medium mb-1 not-italic">Added</div>
+        {added.length === 0
+          ? <span className="text-text-secondary italic">None</span>
+          : added.map((s) => <div key={key(s)} className="text-green-300">{label(s)}</div>)}
+      </div>
+    </div>
+  );
+}
+
 function DetailsView({ details }: { details: unknown }) {
   if (details === null || details === undefined) return null;
   if (typeof details === 'object' && !Array.isArray(details)) {
     const d = details as Record<string, unknown>;
+    if (Array.isArray(d.before) && Array.isArray(d.after)) {
+      return <ShareDiffView before={d.before as ShareEntry[]} after={d.after as ShareEntry[]} />;
+    }
     if (d.before && d.after) {
       return <DiffView before={d.before as Record<string, unknown>} after={d.after as Record<string, unknown>} />;
     }
