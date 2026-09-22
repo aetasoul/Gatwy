@@ -30,6 +30,7 @@ import {
   type SshCachedSession,
 } from './sshSessionCache.js';
 import { CommandTracker } from './commandTracker.js';
+import { isDangerousTunnelHost } from '../services/ssrfGuard.js';
 
 interface ConnectionRow {
   id: string; host: string; port: number; protocol: string;
@@ -47,22 +48,6 @@ interface TunnelConfig { localPort: number; remoteHost: string; remotePort: numb
 interface TunnelStatus extends TunnelConfig { status: 'listening' | 'failed'; error?: string; }
 
 const MAX_TUNNELS_PER_SESSION = 5;
-
-/** Block loopback and cloud metadata endpoints in tunnel remote hosts (C8 SSRF fix).
- *  RFC-1918 private ranges are intentionally allowed — tunnels to internal servers are a
- *  legitimate use case relative to the SSH target's network, not the Gatwy server. */
-function isDangerousTunnelHost(host: string): boolean {
-  const h = host.trim().toLowerCase();
-  return (
-    /^127\./.test(h) ||                // IPv4 loopback
-    h === '::1' ||                     // IPv6 loopback
-    h === 'localhost' ||               // loopback hostname
-    /^169\.254\./.test(h) ||           // link-local / cloud metadata (AWS/Azure/GCP)
-    /^0\.0\.0\.0/.test(h) ||           // unspecified address
-    /^fc00:/i.test(h) ||               // unique local IPv6
-    /^fe80:/i.test(h)                  // link-local IPv6
-  );
-}
 
 function teardownSession(
   clientSessionId: string,
@@ -233,9 +218,17 @@ export function setupSshProxy(server: https.Server): void {
 
       if (tunnelConfigs.length > 0) {
         // Enforce tunnel count limit and block dangerous remote hosts (C8 SSRF fix)
-        tunnelConfigs = tunnelConfigs
-          .slice(0, MAX_TUNNELS_PER_SESSION)
-          .filter((t) => !isDangerousTunnelHost(t.remoteHost));
+        const candidateTunnels = tunnelConfigs.slice(0, MAX_TUNNELS_PER_SESSION);
+        for (const t of candidateTunnels) {
+          if (!isDangerousTunnelHost(t.remoteHost)) continue;
+          logAudit({
+            userId, eventType: 'session.ssh.tunnel.blocked',
+            target: `${t.remoteHost}:${t.remotePort}`,
+            details: { connectionId, sessionId: sessionDbId, localPort: t.localPort },
+            ipAddress: clientIp,
+          });
+        }
+        tunnelConfigs = candidateTunnels.filter((t) => !isDangerousTunnelHost(t.remoteHost));
 
         // Set up each tunnel and collect status asynchronously, then notify the client once all are ready.
         const tunnelStatuses: TunnelStatus[] = [];

@@ -187,10 +187,12 @@ function extractNtlmFromSpnegoResp(spnego: Buffer): Buffer {
 }
 
 function md5(data: Buffer): Buffer {
+  // codeql[js/weak-cryptographic-algorithm]: Required by NTLMv2/CredSSP session key derivation for protocol interoperability.
   return crypto.createHash('md5').update(data).digest();
 }
 
 function hmacMd5(key: Buffer, data: Buffer): Buffer {
+  // codeql[js/weak-cryptographic-algorithm]: Required by NTLMv2/CredSSP message signing/sealing for protocol interoperability.
   return crypto.createHmac('md5', key).update(data).digest();
 }
 

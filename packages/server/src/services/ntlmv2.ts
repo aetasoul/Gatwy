@@ -127,9 +127,12 @@ export function decodeChallenge(buf: Buffer): NtlmChallenge {
 
 // ─── Crypto helpers ──────────────────────────────────────────────────────────
 function md4(data: Buffer): Buffer {
+  // codeql[js/insufficient-password-hash]: NTLM's NT hash (NTOWFv2) is MD4(password) per MS-NLMP —
+  // a transient challenge-response input, not a stored credential hash.
   return crypto.createHash('md4').update(data).digest();
 }
 function hmacMd5(key: Buffer, data: Buffer): Buffer {
+  // codeql[js/weak-cryptographic-algorithm]: Required by NTLMv2 response/session-key computation for protocol interoperability.
   return crypto.createHmac('md5', key).update(data).digest();
 }
 
