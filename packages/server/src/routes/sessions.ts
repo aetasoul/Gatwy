@@ -9,6 +9,7 @@ import { getSetting } from '../services/settings.js';
 import { config } from '../config.js';
 import { decryptRecording, encryptRecordingFileInPlace, openRdpRecordingFile, type RdpRecordingWriter } from '../services/encryption.js';
 import { resolveClientIp } from '../services/ip.js';
+import { connectionAccessWhere } from '../services/permissions.js';
 
 const router = Router();
 router.use(authRequired);
@@ -179,9 +180,10 @@ router.post('/rdp-session', (req: Request, res: Response) => {
   if (!connectionId) { res.status(400).json({ error: 'connectionId required' }); return; }
 
   const role = req.user!.role;
+  const access = connectionAccessWhere('connections', userId, role);
   const conn = queryOne<{ id: string; recording_enabled: number }>(
-    `SELECT id, recording_enabled FROM connections WHERE id = ? AND (user_id = ? OR shared = 1 OR id IN (SELECT cs.connection_id FROM connection_shares cs WHERE (cs.share_type = 'user' AND cs.target_id = ?) OR (cs.share_type = 'role' AND cs.target_id = ?)))`,
-    [connectionId, userId, userId, role],
+    `SELECT id, recording_enabled FROM connections WHERE id = ? AND ${access.where}`,
+    [connectionId, ...access.params],
   );
   if (!conn) { res.status(404).json({ error: 'Connection not found' }); return; }
 

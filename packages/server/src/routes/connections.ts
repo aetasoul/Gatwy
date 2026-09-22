@@ -5,9 +5,10 @@ import { queryAll, queryOne, execute } from '../db/helpers.js';
 import { authRequired, userCan } from '../middleware/auth.js';
 import { encrypt, decrypt } from '../services/encryption.js';
 import { logAudit } from '../services/audit.js';
-import { applyCredential, checkCredentialAssignable, isConnectionShared } from '../services/credentials.js';
+import { applyCredential, checkCredentialAssignable, connectionsWithUnshareableCredential, isConnectionShared } from '../services/credentials.js';
 import { prepareKey } from '../services/sshKeys.js';
 import { filterListedConnections, isMoonlightWebAvailable, runtimeFeatures } from '../services/moonlightWeb.js';
+import { accessibleSharedGroupIds, connectionAccessWhere, descendantGroupIds, groupOwnedBy } from '../services/permissions.js';
 
 const ALL_PROTOCOLS = ['ssh', 'rdp', 'smb', 'vnc', 'moonlight', 'sftp', 'ftp', 'telnet', 'postgres', 'mysql'] as const;
 
@@ -66,14 +67,6 @@ interface GroupRow {
   sort_order: number;
 }
 
-/** SQL condition: user owns the connection, OR it's shared globally, OR shared via connection_shares */
-function canAccessWhere(alias = 'connections'): string {
-  return `(${alias}.user_id = ? OR ${alias}.shared = 1 OR ${alias}.id IN (SELECT cs.connection_id FROM connection_shares cs WHERE (cs.share_type = 'user' AND cs.target_id = ?) OR (cs.share_type = 'role' AND cs.target_id = ?)))`;
-}
-function canAccessParams(req: Request): unknown[] {
-  return [req.user!.userId, req.user!.userId, req.user!.role];
-}
-
 /** True if the payload asks to create a connection as globally shared without connections.share. */
 function blockedSharedCreate(req: Request, sharedValue: unknown): boolean {
   return !!sharedValue && !userCan(req, 'connections.share');
@@ -95,6 +88,7 @@ function blockedSharedUpdate(req: Request, sharedValue: unknown, existingShared:
 // List connections and groups
 router.get('/', (req: Request, res: Response) => {
   const userId = req.user!.userId;
+  const userRole = req.user!.role;
 
   const groups = queryAll<GroupRow>(
     'SELECT id, name, parent_id, sort_order FROM connection_groups WHERE user_id = ? ORDER BY sort_order, name COLLATE NOCASE ASC',
@@ -106,10 +100,35 @@ router.get('/', (req: Request, res: Response) => {
     [userId],
   ));
 
-  // Shared connections from other users (shared=1 globally, or shared via connection_shares to this user or role)
-  const userRole = req.user!.role;
+  // Folders (owned by someone else) reachable via a folder share — resolved live, so a
+  // new sub-folder or connection dropped in later shows up without any extra share row.
+  const sharedGroupIdList = accessibleSharedGroupIds(userId, userRole);
+  let sharedGroupRows: (GroupRow & { user_id: string })[] = [];
+  let sharedGroupConnRows: ConnectionRow[] = [];
+  if (sharedGroupIdList.length > 0) {
+    const groupPlaceholders = sharedGroupIdList.map(() => '?').join(',');
+    sharedGroupRows = queryAll<GroupRow & { user_id: string }>(
+      `SELECT id, name, parent_id, sort_order, user_id FROM connection_groups WHERE id IN (${groupPlaceholders}) AND user_id != ?`,
+      [...sharedGroupIdList, userId],
+    );
+    if (sharedGroupRows.length > 0) {
+      const ownedSharedGroupIds = sharedGroupRows.map((g) => g.id);
+      const connPlaceholders = ownedSharedGroupIds.map(() => '?').join(',');
+      const groupOwnerById = new Map(sharedGroupRows.map((g) => [g.id, g.user_id]));
+      // Defense in depth: only surface a connection whose owner matches its folder's owner,
+      // so a connection can't be "planted" into someone else's shared folder to leak into it.
+      sharedGroupConnRows = filterListedConnections(queryAll<ConnectionRow>(
+        `SELECT id, name, protocol, host, port, group_id, username, sort_order, shared, tags, user_id FROM connections WHERE group_id IN (${connPlaceholders}) ORDER BY sort_order, name COLLATE NOCASE ASC`,
+        ownedSharedGroupIds,
+      )).filter((c) => c.group_id && groupOwnerById.get(c.group_id) === c.user_id);
+    }
+  }
+  const sharedGroupIdSet = new Set(sharedGroupRows.map((g) => g.id));
+
+  // Individually-shared connections from other users (shared=1, or connection_shares) —
+  // excluding any already reachable via a shared folder above, to avoid listing twice.
   const sharedConnections = filterListedConnections(queryAll<ConnectionRow>(
-    `SELECT DISTINCT c.id, c.name, c.protocol, c.host, c.port, c.username, c.shared, c.user_id, c.tags
+    `SELECT DISTINCT c.id, c.name, c.protocol, c.host, c.port, c.username, c.shared, c.user_id, c.tags, c.group_id
      FROM connections c
      WHERE c.user_id != ?
        AND (c.shared = 1
@@ -118,7 +137,7 @@ router.get('/', (req: Request, res: Response) => {
                            OR (cs.share_type = 'role' AND cs.target_id = ?)))
      ORDER BY c.name`,
     [userId, userId, userRole],
-  ));
+  )).filter((c) => !c.group_id || !sharedGroupIdSet.has(c.group_id));
 
   // Build tree
   interface GroupNode {
@@ -129,39 +148,57 @@ router.get('/', (req: Request, res: Response) => {
     connections: { id: string; name: string; protocol: string; host: string; port: number; groupId: string | null; isShared: boolean; tags: string[] }[];
   }
 
-  const groupMap = new Map<string, GroupNode>();
-  for (const g of groups) {
-    groupMap.set(g.id, { id: g.id, name: g.name, parentId: g.parent_id, children: [], connections: [] });
-  }
-
-  const rootGroups: GroupNode[] = [];
-  for (const g of groupMap.values()) {
-    if (g.parentId && groupMap.has(g.parentId)) {
-      groupMap.get(g.parentId)!.children.push(g);
-    } else {
-      rootGroups.push(g);
+  function buildTree(rows: GroupRow[]): { map: Map<string, GroupNode>; roots: GroupNode[] } {
+    const map = new Map<string, GroupNode>();
+    for (const g of rows) {
+      map.set(g.id, { id: g.id, name: g.name, parentId: g.parent_id, children: [], connections: [] });
     }
+    const roots: GroupNode[] = [];
+    for (const g of map.values()) {
+      if (g.parentId && map.has(g.parentId)) {
+        map.get(g.parentId)!.children.push(g);
+      } else {
+        roots.push(g);
+      }
+    }
+    return { map, roots };
   }
 
-  const connMapped = connections.map((c) => ({
-    id: c.id, name: c.name, protocol: c.protocol, host: c.host, port: c.port, groupId: c.group_id, isShared: false,
-    tags: c.tags ? JSON.parse(c.tags) as string[] : [],
-  }));
+  function mapConn(c: ConnectionRow, isShared: boolean) {
+    return {
+      id: c.id, name: c.name, protocol: c.protocol, host: c.host, port: c.port, groupId: c.group_id, isShared,
+      tags: c.tags ? JSON.parse(c.tags) as string[] : [],
+    };
+  }
 
+  const { map: groupMap, roots: rootGroups } = buildTree(groups);
+  const connMapped = connections.map((c) => mapConn(c, false));
   for (const conn of connMapped) {
     if (conn.groupId && groupMap.has(conn.groupId)) {
       groupMap.get(conn.groupId)!.connections.push(conn);
     }
   }
-
   const ungrouped = connMapped.filter((c) => !c.groupId || !groupMap.has(c.groupId));
 
-  const sharedMapped = sharedConnections.map((c) => ({
-    id: c.id, name: c.name, protocol: c.protocol, host: c.host, port: c.port, groupId: null, isShared: true,
-    tags: c.tags ? JSON.parse(c.tags) as string[] : [],
-  }));
+  // Shared-folder tree — preserves the owner's hierarchy under each directly-shared folder
+  // (its own unshared ancestors, if any, are simply not part of the tree).
+  const { map: sharedGroupMap, roots: sharedRootGroups } = buildTree(sharedGroupRows);
+  const sharedGroupConnMapped = sharedGroupConnRows.map((c) => mapConn(c, true));
+  for (const conn of sharedGroupConnMapped) {
+    if (conn.groupId && sharedGroupMap.has(conn.groupId)) {
+      sharedGroupMap.get(conn.groupId)!.connections.push(conn);
+    }
+  }
 
-  res.json({ groups: rootGroups, ungrouped, sharedConnections: sharedMapped, features: runtimeFeatures() });
+  const sharedMapped = sharedConnections.map((c) => ({ ...mapConn(c, true), groupId: null }));
+
+  res.json({
+    groups: rootGroups,
+    ungrouped,
+    sharedConnections: sharedMapped,
+    sharedGroups: sharedRootGroups,
+    features: runtimeFeatures(),
+  });
 });
 
 // Helper: check if IP is in a private/loopback/link-local range
@@ -185,11 +222,12 @@ router.post('/health-check', async (req: Request, res: Response) => {
   if (!Array.isArray(checks)) { res.status(400).json({ error: 'checks array required' }); return; }
 
   // Resolve and validate each check against stored connections
+  const access = connectionAccessWhere('connections', req.user!.userId, req.user!.role);
   const validatedChecks: { id: string; host: string; port: number }[] = [];
   for (const { id } of checks) {
     const conn = queryOne<{ host: string; port: number }>(
-      `SELECT host, port FROM connections WHERE id = ? AND ${canAccessWhere('connections')}`,
-      [id, ...canAccessParams(req)],
+      `SELECT host, port FROM connections WHERE id = ? AND ${access.where}`,
+      [id, ...access.params],
     );
     if (!conn) continue;
     if (isDangerousHost(conn.host)) continue;
@@ -369,6 +407,13 @@ router.post('/', (req: Request, res: Response) => {
     return;
   }
 
+  // A connection can only be filed under a folder its creator owns — otherwise it could be
+  // planted into a folder shared to the creator, surfacing it to everyone that folder is shared with.
+  if (groupId && !groupOwnedBy(groupId, userId)) {
+    res.status(400).json({ error: 'Invalid folder' });
+    return;
+  }
+
   // Validate VNC pointer scale: factor = 100/percent, valid percent range [50, 400] → factor [0.25, 2]
   if (protocol === 'vnc' && extraConfig) {
     const cfg = extraConfig as Record<string, unknown>;
@@ -504,6 +549,13 @@ router.put('/:id', (req: Request, res: Response) => {
     return;
   }
 
+  // A connection can only be filed under a folder its owner owns — otherwise it could be
+  // planted into a folder shared to the owner, surfacing it to everyone that folder is shared with.
+  if (groupId && !groupOwnedBy(groupId, existing.user_id)) {
+    res.status(400).json({ error: 'Invalid folder' });
+    return;
+  }
+
   // Validate the credential the connection will use after this update — a newly
   // linked one, or the existing one if the connection is becoming shared.
   const nextCredentialId: string | null = credentialId !== undefined ? (credentialId || null) : existing.credential_id;
@@ -634,9 +686,10 @@ router.get('/:id', (req: Request, res: Response) => {
   const userId = req.user!.userId;
   const id = req.params.id as string;
 
+  const access = connectionAccessWhere('connections', req.user!.userId, req.user!.role);
   const conn = queryOne<ConnectionRow>(
-    `SELECT * FROM connections WHERE id = ? AND ${canAccessWhere()}`,
-    [id, ...canAccessParams(req)],
+    `SELECT * FROM connections WHERE id = ? AND ${access.where}`,
+    [id, ...access.params],
   );
 
   if (!conn) {
@@ -694,9 +747,10 @@ router.get('/:id/session', (req: Request, res: Response) => {
   const id = req.params.id as string;
 
   // Credentials returned to the owner or to users with explicit share access
+  const access = connectionAccessWhere('connections', req.user!.userId, req.user!.role);
   const row = queryOne<ConnectionRow>(
-    `SELECT * FROM connections WHERE id = ? AND ${canAccessWhere()}`,
-    [id, ...canAccessParams(req)],
+    `SELECT * FROM connections WHERE id = ? AND ${access.where}`,
+    [id, ...access.params],
   );
 
   if (!row) {
@@ -760,6 +814,14 @@ router.post('/groups', (req: Request, res: Response) => {
     return;
   }
 
+  // A group can only be nested under a folder its creator owns — otherwise it could be
+  // grafted onto a folder shared to the creator, surfacing it (and everything inside) to
+  // everyone that folder is shared with.
+  if (parentId && !groupOwnedBy(parentId, userId)) {
+    res.status(400).json({ error: 'Invalid parent folder' });
+    return;
+  }
+
   const id = uuid();
   execute(
     'INSERT INTO connection_groups (id, user_id, name, parent_id, sort_order) VALUES (?, ?, ?, ?, ?)',
@@ -779,6 +841,14 @@ router.put('/groups/:id', (req: Request, res: Response) => {
   );
   if (!group) { res.status(404).json({ error: 'Group not found' }); return; }
   if (group.user_id !== userId && !userCan(req, 'connections.edit_any')) { res.status(403).json({ error: 'Not authorized' }); return; }
+
+  // A group's parent must belong to the same owner as the group itself — not the caller —
+  // otherwise an `edit_any` admin reparenting someone else's group under their own folder
+  // (or the owner reparenting under a folder shared to them) grafts it into that share.
+  if (parentId && !groupOwnedBy(parentId, group.user_id)) {
+    res.status(400).json({ error: 'Invalid parent folder' });
+    return;
+  }
 
   const updates: string[] = [];
   const params: unknown[] = [];
@@ -822,6 +892,83 @@ router.delete('/groups/:id', (req: Request, res: Response) => {
   execute('DELETE FROM connection_groups WHERE id = ? AND user_id = ?', [id, userId]);
 
   res.json({ success: true });
+});
+
+// --- Group (folder) Shares ---
+// Sharing a folder grants access to it, every sub-folder, and every connection inside
+// them — resolved live by connectionAccessWhere/accessibleSharedGroupIds, so a
+// connection or sub-folder added later inherits the share automatically.
+
+// GET /groups/:id/shares — list shares for a folder (owner only)
+router.get('/groups/:id/shares', (req: Request, res: Response) => {
+  const userId = req.user!.userId;
+  const id = req.params.id as string;
+  const group = queryOne<{ user_id: string }>('SELECT user_id FROM connection_groups WHERE id = ?', [id]);
+  if (!group) { res.status(404).json({ error: 'Folder not found' }); return; }
+  if (group.user_id !== userId && !userCan(req, 'connections.edit_any')) {
+    res.status(403).json({ error: 'Not authorized' }); return;
+  }
+  const shares = queryAll<{ id: string; share_type: string; target_id: string; created_at: string }>(
+    'SELECT id, share_type, target_id, created_at FROM group_shares WHERE group_id = ? ORDER BY share_type, target_id',
+    [id],
+  );
+  res.json(shares.map(s => ({ id: s.id, shareType: s.share_type, targetId: s.target_id, createdAt: s.created_at })));
+});
+
+// PUT /groups/:id/shares — replace all shares for a folder
+router.put('/groups/:id/shares', (req: Request, res: Response) => {
+  const userId = req.user!.userId;
+  const id = req.params.id as string;
+  const group = queryOne<{ user_id: string }>('SELECT user_id FROM connection_groups WHERE id = ?', [id]);
+  if (!group) { res.status(404).json({ error: 'Folder not found' }); return; }
+  if (group.user_id !== userId && !userCan(req, 'connections.edit_any')) {
+    res.status(403).json({ error: 'Not authorized' }); return;
+  }
+  if (!userCan(req, 'connections.share')) {
+    res.status(403).json({ error: 'Sharing permission required' }); return;
+  }
+
+  const { shares } = req.body as { shares: { shareType: string; targetId: string }[] };
+  if (!Array.isArray(shares)) { res.status(400).json({ error: 'shares array required' }); return; }
+
+  const before = queryAll<{ share_type: string; target_id: string }>(
+    'SELECT share_type, target_id FROM group_shares WHERE group_id = ? ORDER BY share_type, target_id',
+    [id],
+  ).map((s) => ({ shareType: s.share_type, targetId: s.target_id }));
+
+  execute('DELETE FROM group_shares WHERE group_id = ?', [id]);
+  const after: { shareType: string; targetId: string }[] = [];
+  for (const s of shares) {
+    if (s.shareType !== 'role' && s.shareType !== 'user') continue;
+    if (!s.targetId) continue;
+    const sid = uuid();
+    execute(
+      'INSERT INTO group_shares (id, group_id, share_type, target_id) VALUES (?, ?, ?, ?)',
+      [sid, id, s.shareType, s.targetId],
+    );
+    after.push({ shareType: s.shareType, targetId: s.targetId });
+  }
+
+  logAudit({
+    userId,
+    eventType: 'group.shares_updated',
+    target: id,
+    details: { before, after },
+    ipAddress: req.ip,
+  });
+
+  // Folder sharing never re-validates each connection's credential the way per-connection
+  // sharing does — a private library credential inside just goes null for recipients
+  // (applyCredential's defence in depth) instead of erroring. Surface that clearly rather
+  // than let it look like the connection is simply broken.
+  let warnings: { connectionId: string; connectionName: string }[] = [];
+  if (after.length > 0) {
+    const groupIds = descendantGroupIds(id);
+    warnings = connectionsWithUnshareableCredential(groupIds)
+      .map((c) => ({ connectionId: c.id, connectionName: c.name }));
+  }
+
+  res.json({ success: true, warnings });
 });
 
 // --- Connection Shares ---

@@ -12,7 +12,7 @@ process.env.GATWY_ENCRYPTION_KEY = crypto.randomBytes(32).toString('hex');
 
 const { initDb, getDb, closeDb } = await import('../src/db/index.js');
 const { execute } = await import('../src/db/helpers.js');
-const { applyCredential, checkCredentialAssignable, isConnectionShared, sharedCredentialsInUseByOthers, getCredentialDomain } = await import('../src/services/credentials.js');
+const { applyCredential, checkCredentialAssignable, connectionsWithUnshareableCredential, isConnectionShared, sharedCredentialsInUseByOthers, getCredentialDomain } = await import('../src/services/credentials.js');
 
 const ALICE = 'user-alice';
 const BOB = 'user-bob';
@@ -33,12 +33,16 @@ function addCredential(id: string, ownerId: string, shared: boolean, over: Recor
   );
 }
 
-function addConnection(id: string, ownerId: string, opts: { shared?: boolean; credentialId?: string | null } = {}) {
+function addConnection(id: string, ownerId: string, opts: { shared?: boolean; credentialId?: string | null; groupId?: string | null } = {}) {
   execute(
-    `INSERT INTO connections (id, user_id, name, protocol, host, port, username, encrypted_password, shared, credential_id)
-     VALUES (?, ?, ?, 'ssh', 'host', 22, 'inline-user', 'inline-enc', ?, ?)`,
-    [id, ownerId, id, opts.shared ? 1 : 0, opts.credentialId ?? null],
+    `INSERT INTO connections (id, user_id, group_id, name, protocol, host, port, username, encrypted_password, shared, credential_id)
+     VALUES (?, ?, ?, ?, 'ssh', 'host', 22, 'inline-user', 'inline-enc', ?, ?)`,
+    [id, ownerId, opts.groupId ?? null, id, opts.shared ? 1 : 0, opts.credentialId ?? null],
   );
+}
+
+function addGroup(id: string, ownerId: string) {
+  execute('INSERT INTO connection_groups (id, user_id, name) VALUES (?, ?, ?)', [id, ownerId, id]);
 }
 
 function connRow(id: string) {
@@ -188,6 +192,40 @@ describe('credential rules', () => {
       assert.equal(blockers.length, 1);
       assert.equal(blockers[0]!.id, 'cred-alice-shared');
       assert.deepEqual(blockers[0]!.connections.map((c) => c.id), ['conn-other-shared-cred']);
+    });
+  });
+
+  describe('connectionsWithUnshareableCredential', () => {
+    it('is empty for a folder with no connections', () => {
+      addGroup('grp-empty', ALICE);
+      assert.deepEqual(connectionsWithUnshareableCredential(['grp-empty']), []);
+    });
+
+    it('flags a connection linked to a private credential', () => {
+      addGroup('grp-private-cred', ALICE);
+      addConnection('conn-grp-private-cred', ALICE, { groupId: 'grp-private-cred', credentialId: 'cred-alice-private' });
+      const result = connectionsWithUnshareableCredential(['grp-private-cred']);
+      assert.deepEqual(result.map((c) => c.id), ['conn-grp-private-cred']);
+    });
+
+    it('ignores a connection linked to a shared credential', () => {
+      addGroup('grp-shared-cred', ALICE);
+      addConnection('conn-grp-shared-cred', ALICE, { groupId: 'grp-shared-cred', credentialId: 'cred-alice-shared' });
+      assert.deepEqual(connectionsWithUnshareableCredential(['grp-shared-cred']), []);
+    });
+
+    it('ignores a connection with no linked credential (inline creds travel with the share)', () => {
+      addGroup('grp-inline-cred', ALICE);
+      addConnection('conn-grp-inline-cred', ALICE, { groupId: 'grp-inline-cred' });
+      assert.deepEqual(connectionsWithUnshareableCredential(['grp-inline-cred']), []);
+    });
+
+    it("ignores a planted connection (owner doesn't match the folder's owner)", () => {
+      // Recipients never see this connection through the folder share in the first place
+      // (connectionAccessWhere's defence in depth), so it must not surface as a warning either.
+      addGroup('grp-planted', ALICE);
+      addConnection('conn-planted-cred', BOB, { groupId: 'grp-planted', credentialId: 'cred-bob-private' });
+      assert.deepEqual(connectionsWithUnshareableCredential(['grp-planted']), []);
     });
   });
 

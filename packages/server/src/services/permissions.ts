@@ -1,4 +1,4 @@
-import { queryOne } from '../db/helpers.js';
+import { queryOne, queryAll } from '../db/helpers.js';
 
 /** All recognised permission keys */
 export const ALL_PERMISSIONS = [
@@ -123,14 +123,109 @@ export function userHasPermission(userId: string, perm: PermissionKey): boolean 
 }
 
 /**
+ * Whether the connection_groups row `groupId` exists and is owned by `ownerId`.
+ * Single source of truth for the cross-owner nesting guard: a connection or a
+ * sub-folder may only be filed under / reparented onto a folder its own owner
+ * holds — never a folder merely shared to them — or it would be grafted into
+ * whatever that folder is shared with.
+ */
+export function groupOwnedBy(groupId: string, ownerId: string): boolean {
+  const row = queryOne<{ user_id: string }>('SELECT user_id FROM connection_groups WHERE id = ?', [groupId]);
+  return !!row && row.user_id === ownerId;
+}
+
+/**
+ * BFS from `rootIds` through connection_groups, descending into a child only when its
+ * owner matches its parent's owner — a group grafted (via parent_id) under someone
+ * else's folder must never inherit whatever that folder is reachable through.
+ * Shared by accessibleSharedGroupIds (roots = directly-shared groups) and
+ * descendantGroupIds (root = a single folder, e.g. the one just being shared).
+ */
+function ownerScopedDescendants(rootIds: string[]): string[] {
+  if (rootIds.length === 0) return [];
+
+  const allGroups = queryAll<{ id: string; parent_id: string | null; user_id: string }>(
+    'SELECT id, parent_id, user_id FROM connection_groups',
+  );
+  const ownerOf = new Map(allGroups.map((g) => [g.id, g.user_id]));
+  const childrenOf = new Map<string, string[]>();
+  for (const g of allGroups) {
+    if (!g.parent_id) continue;
+    const list = childrenOf.get(g.parent_id) ?? [];
+    list.push(g.id);
+    childrenOf.set(g.parent_id, list);
+  }
+
+  // A root that no longer exists (deleted group, stale share row) seeds nothing.
+  const validRoots = rootIds.filter((id) => ownerOf.has(id));
+  if (validRoots.length === 0) return [];
+
+  const result = new Set<string>();
+  const queue = [...validRoots];
+  while (queue.length > 0) {
+    const gid = queue.pop()!;
+    if (result.has(gid)) continue;
+    result.add(gid);
+    const owner = ownerOf.get(gid);
+    for (const child of childrenOf.get(gid) ?? []) {
+      if (ownerOf.get(child) === owner) queue.push(child);
+    }
+  }
+  return [...result];
+}
+
+/**
+ * All connection_group IDs reachable via a folder share to this user/role: the directly
+ * shared groups plus every descendant. Resolved fresh on every call (never materialized
+ * into per-connection rows), so a new sub-folder or a new connection dropped into an
+ * already-shared folder inherits access immediately — no share row needs to be copied.
+ */
+export function accessibleSharedGroupIds(userId: string, role: string): string[] {
+  const directRows = queryAll<{ group_id: string }>(
+    `SELECT DISTINCT group_id FROM group_shares WHERE (share_type = 'user' AND target_id = ?) OR (share_type = 'role' AND target_id = ?)`,
+    [userId, role],
+  );
+  return ownerScopedDescendants(directRows.map((r) => r.group_id));
+}
+
+/**
+ * A folder plus every owner-scoped descendant beneath it — the full subtree that
+ * becomes reachable when `rootId` itself is shared, regardless of who it's shared with.
+ * Used to scan the about-to-be-shared subtree for connections whose credentials won't
+ * actually be visible to the recipients (see connectionsWithUnshareableCredential).
+ */
+export function descendantGroupIds(rootId: string): string[] {
+  return ownerScopedDescendants([rootId]);
+}
+
+/**
+ * Build a SQL WHERE fragment + params: true when a connection is owned by, globally
+ * shared to, individually shared to, or reachable via a shared parent folder for, the
+ * given user/role. Single source of truth for connection access — every route that
+ * gates connection access (SFTP/FTP/SMB/DB, sessions, WS proxies, the connections list)
+ * must go through this rather than re-deriving the condition.
+ */
+export function connectionAccessWhere(alias: string, userId: string, role: string): { where: string; params: unknown[] } {
+  const sharedGroups = accessibleSharedGroupIds(userId, role);
+  // Require the connection's owner to match its folder's actual owner, not just group_id
+  // membership — otherwise a connection "planted" (by direct DB write, or a bug elsewhere)
+  // into someone else's shared folder would be reachable by everyone that folder is shared
+  // with. Write-side routes already reject a mismatched groupId; this is defense in depth.
+  const groupClause = sharedGroups.length > 0
+    ? ` OR (${alias}.group_id IN (${sharedGroups.map(() => '?').join(',')}) AND ${alias}.user_id = (SELECT cg.user_id FROM connection_groups cg WHERE cg.id = ${alias}.group_id))`
+    : '';
+  return {
+    where: `(${alias}.user_id = ? OR ${alias}.shared = 1 OR ${alias}.id IN (SELECT cs.connection_id FROM connection_shares cs WHERE (cs.share_type = 'user' AND cs.target_id = ?) OR (cs.share_type = 'role' AND cs.target_id = ?))${groupClause})`,
+    params: [userId, userId, role, ...sharedGroups],
+  };
+}
+
+/**
  * Build SQL WHERE clause + params for connection access (used by WS proxies).
- * Checks ownership, shared=1, or connection_shares matching user/role.
+ * Checks ownership, shared=1, connection_shares, and shared-folder inheritance.
  */
 export function wsCanAccess(userId: string): { where: string; params: unknown[] } {
   const user = queryOne<{ role: string }>('SELECT role FROM users WHERE id = ?', [userId]);
   const role = user?.role ?? '';
-  return {
-    where: '(user_id = ? OR shared = 1 OR id IN (SELECT cs.connection_id FROM connection_shares cs WHERE (cs.share_type = \'user\' AND cs.target_id = ?) OR (cs.share_type = \'role\' AND cs.target_id = ?)))',
-    params: [userId, userId, role],
-  };
+  return connectionAccessWhere('connections', userId, role);
 }

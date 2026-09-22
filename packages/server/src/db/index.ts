@@ -985,6 +985,20 @@ function runMigrations() {
         try { database.run('ALTER TABLE credentials ADD COLUMN domain TEXT'); } catch { /* already exists */ }
       },
     },
+    {
+      version: 22,
+      sql: `
+        CREATE TABLE IF NOT EXISTS group_shares (
+          id TEXT PRIMARY KEY,
+          group_id TEXT NOT NULL REFERENCES connection_groups(id) ON DELETE CASCADE,
+          share_type TEXT NOT NULL CHECK(share_type IN ('role', 'user')),
+          target_id TEXT NOT NULL,
+          created_at TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+        CREATE INDEX IF NOT EXISTS idx_group_shares_group ON group_shares(group_id);
+        CREATE INDEX IF NOT EXISTS idx_group_shares_target ON group_shares(share_type, target_id);
+      `,
+    },
   ];
 
   for (const migration of migrations) {

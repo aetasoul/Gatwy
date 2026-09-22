@@ -61,6 +61,36 @@ export function checkCredentialAssignable(
   return null;
 }
 
+export interface UnshareableCredentialConnection {
+  id: string;
+  name: string;
+}
+
+/**
+ * Connections filed directly under any of `groupIds` whose linked library credential
+ * is private (not marked shared). Folder sharing never re-validates a connection's
+ * credential the way per-connection sharing does (checkCredentialAssignable) — such a
+ * connection isn't blocked (applyCredential already withholds the credential from
+ * anyone but its owner), it just silently shows no credentials to folder recipients.
+ * Used to surface that as a clear warning when a folder's shares are saved.
+ *
+ * Requires the connection's owner to match its folder's owner — the same defence-in-depth
+ * boundary connectionAccessWhere enforces — so a "planted" connection (which recipients
+ * never actually see through the share) doesn't show up here as a false-positive warning.
+ */
+export function connectionsWithUnshareableCredential(groupIds: string[]): UnshareableCredentialConnection[] {
+  if (groupIds.length === 0) return [];
+  const placeholders = groupIds.map(() => '?').join(',');
+  return queryAll<UnshareableCredentialConnection>(
+    `SELECT c.id, c.name FROM connections c
+     JOIN credentials cr ON cr.id = c.credential_id
+     JOIN connection_groups cg ON cg.id = c.group_id AND cg.user_id = c.user_id
+     WHERE c.group_id IN (${placeholders}) AND cr.shared = 0
+     ORDER BY c.name COLLATE NOCASE`,
+    groupIds,
+  );
+}
+
 export interface SharedCredentialBlocker {
   id: string;
   name: string;

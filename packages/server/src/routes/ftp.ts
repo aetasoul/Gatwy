@@ -9,6 +9,7 @@ import { applyCredential } from '../services/credentials.js';
 import { logAudit } from '../services/audit.js';
 import { logFileSessionEvent } from '../services/fileSession.js';
 import { resolveClientIp } from '../services/ip.js';
+import { connectionAccessWhere } from '../services/permissions.js';
 
 /**
  * TLS options for an FTPS control/data connection. Certificate validation is on
@@ -43,11 +44,12 @@ interface ConnRow {
 }
 
 function getConn(connectionId: string, userId: string, role: string): ConnRow | null {
+  const access = connectionAccessWhere('connections', userId, role);
   const conn = queryOne<ConnRow>(
     `SELECT id, host, port, username, encrypted_password, user_id, shared, extra_config_json, skip_cert_validation, credential_id
      FROM connections
-     WHERE id = ? AND (user_id = ? OR shared = 1 OR id IN (SELECT cs.connection_id FROM connection_shares cs WHERE (cs.share_type = 'user' AND cs.target_id = ?) OR (cs.share_type = 'role' AND cs.target_id = ?))) AND protocol = 'ftp'`,
-    [connectionId, userId, userId, role],
+     WHERE id = ? AND ${access.where} AND protocol = 'ftp'`,
+    [connectionId, ...access.params],
   );
   return conn ? applyCredential(conn, userId) : null;
 }
