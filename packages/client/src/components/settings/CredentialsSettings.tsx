@@ -291,24 +291,23 @@ export function CredentialsSettings() {
                   placeholder="user" autoComplete="off" className={inputCls} />
               </div>
 
-              {type === 'password' && (
-                <div>
-                  <label className="block text-xs text-text-secondary mb-1">
-                    Domain <span className="font-normal">(optional)</span>
-                  </label>
-                  <input type="text" value={domain} onChange={(e) => setDomain(e.target.value)}
-                    placeholder="WORKGROUP" autoComplete="off" className={inputCls} />
-                  <p className="text-[11px] text-text-secondary mt-1">Used for SMB connections instead of retyping it per connection.</p>
-                </div>
-              )}
-
               {type === 'password' ? (
-                <div>
-                  <label className="block text-xs text-text-secondary mb-1">Password</label>
-                  <input type="password" value={password} onChange={(e) => setPassword(e.target.value)}
-                    autoComplete="new-password"
-                    placeholder={editing?.hasPassword ? '(unchanged)' : ''} className={inputCls} />
-                </div>
+                <>
+                  <div>
+                    <label className="block text-xs text-text-secondary mb-1">Password</label>
+                    <input type="password" value={password} onChange={(e) => setPassword(e.target.value)}
+                      autoComplete="new-password"
+                      placeholder={editing?.hasPassword ? '(unchanged)' : ''} className={inputCls} />
+                  </div>
+                  <div>
+                    <label className="block text-xs text-text-secondary mb-1">
+                      Domain <span className="font-normal">(optional)</span>
+                    </label>
+                    <input type="text" value={domain} onChange={(e) => setDomain(e.target.value)}
+                      placeholder="WORKGROUP" autoComplete="off" className={inputCls} />
+                    <p className="text-[11px] text-text-secondary mt-1">Used for SMB connections instead of retyping it per connection.</p>
+                  </div>
+                </>
               ) : (
                 <>
                   <div>
