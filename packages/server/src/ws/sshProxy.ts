@@ -218,9 +218,17 @@ export function setupSshProxy(server: https.Server): void {
 
       if (tunnelConfigs.length > 0) {
         // Enforce tunnel count limit and block dangerous remote hosts (C8 SSRF fix)
-        tunnelConfigs = tunnelConfigs
-          .slice(0, MAX_TUNNELS_PER_SESSION)
-          .filter((t) => !isDangerousTunnelHost(t.remoteHost));
+        const candidateTunnels = tunnelConfigs.slice(0, MAX_TUNNELS_PER_SESSION);
+        for (const t of candidateTunnels) {
+          if (!isDangerousTunnelHost(t.remoteHost)) continue;
+          logAudit({
+            userId, eventType: 'session.ssh.tunnel.blocked',
+            target: `${t.remoteHost}:${t.remotePort}`,
+            details: { connectionId, sessionId: sessionDbId, localPort: t.localPort },
+            ipAddress: clientIp,
+          });
+        }
+        tunnelConfigs = candidateTunnels.filter((t) => !isDangerousTunnelHost(t.remoteHost));
 
         // Set up each tunnel and collect status asynchronously, then notify the client once all are ready.
         const tunnelStatuses: TunnelStatus[] = [];

@@ -521,6 +521,12 @@ export function setupRdpProxy(server: https.Server): void {
                         generation,
                         redirectHost: inspection.redirect.host,
                       });
+                      logAudit({
+                        userId, eventType: 'session.rdp.redirect.blocked',
+                        target: `${inspection.redirect.host}:${inspection.redirect.port}`,
+                        details: { connectionId, sessionId, originalTarget: `${conn.host}:${conn.port}` },
+                        ipAddress: clientIp,
+                      });
                       flushTrace('redirect.blocked');
                       if (ws.readyState === WebSocket.OPEN) ws.close(4003, 'Redirect target not allowed');
                       cleanup();
