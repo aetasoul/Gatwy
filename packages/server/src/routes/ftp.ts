@@ -5,6 +5,7 @@ import type { ConnectionOptions as TlsConnectionOptions } from 'tls';
 import { queryOne } from '../db/helpers.js';
 import { authRequired, requirePermission } from '../middleware/auth.js';
 import { decrypt } from '../services/encryption.js';
+import { applyCredential } from '../services/credentials.js';
 import { logAudit } from '../services/audit.js';
 import { logFileSessionEvent } from '../services/fileSession.js';
 import { resolveClientIp } from '../services/ip.js';
@@ -38,15 +39,17 @@ interface ConnRow {
   shared: number;
   extra_config_json: string | null;
   skip_cert_validation: number;
+  credential_id: string | null;
 }
 
 function getConn(connectionId: string, userId: string, role: string): ConnRow | null {
-  return queryOne<ConnRow>(
-    `SELECT id, host, port, username, encrypted_password, user_id, shared, extra_config_json, skip_cert_validation
+  const conn = queryOne<ConnRow>(
+    `SELECT id, host, port, username, encrypted_password, user_id, shared, extra_config_json, skip_cert_validation, credential_id
      FROM connections
      WHERE id = ? AND (user_id = ? OR shared = 1 OR id IN (SELECT cs.connection_id FROM connection_shares cs WHERE (cs.share_type = 'user' AND cs.target_id = ?) OR (cs.share_type = 'role' AND cs.target_id = ?))) AND protocol = 'ftp'`,
     [connectionId, userId, userId, role],
-  ) ?? null;
+  );
+  return conn ? applyCredential(conn, userId) : null;
 }
 
 async function makeFtpClient(conn: ConnRow): Promise<ftp.Client> {
