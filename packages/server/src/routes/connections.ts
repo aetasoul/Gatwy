@@ -5,6 +5,7 @@ import { queryAll, queryOne, execute } from '../db/helpers.js';
 import { authRequired, userCan } from '../middleware/auth.js';
 import { encrypt, decrypt } from '../services/encryption.js';
 import { logAudit } from '../services/audit.js';
+import { prepareKey } from '../services/sshKeys.js';
 import { filterListedConnections, isMoonlightWebAvailable, runtimeFeatures } from '../services/moonlightWeb.js';
 
 const ALL_PROTOCOLS = ['ssh', 'rdp', 'smb', 'vnc', 'moonlight', 'sftp', 'ftp', 'telnet', 'postgres', 'mysql'] as const;
@@ -17,6 +18,24 @@ function createProtocols(): readonly string[] {
 
 const router = Router();
 router.use(authRequired);
+
+/**
+ * Prepare a private key for storage: PKCS#8 keys are converted to a format
+ * ssh2 reads. Returns the key to store (null when none was given), or an
+ * error message — connections have nowhere to keep a key passphrase.
+ */
+function prepareInlineKey(privateKey: unknown): { key: string | null } | { error: string } {
+  if (typeof privateKey !== 'string' || !privateKey.trim()) return { key: null };
+  const prepared = prepareKey(privateKey);
+  if ('error' in prepared) {
+    return {
+      error: /passphrase/i.test(prepared.error)
+        ? 'This private key is encrypted. Connections can\'t store a key passphrase — use a key without one.'
+        : prepared.error,
+    };
+  }
+  return { key: prepared.key.privateKey };
+}
 
 interface ConnectionRow {
   id: string;
@@ -310,7 +329,9 @@ router.post('/', (req: Request, res: Response) => {
 
   const id = uuid();
   const encryptedPassword = password ? encrypt(password) : null;
-  const encryptedKey = privateKey ? encrypt(privateKey) : null;
+  const inlineKey = prepareInlineKey(privateKey);
+  if ('error' in inlineKey) { res.status(400).json({ error: inlineKey.error }); return; }
+  const encryptedKey = inlineKey.key ? encrypt(inlineKey.key) : null;
   const tagsStr = Array.isArray(tags) ? JSON.stringify(tags.map((t: string) => t.trim()).filter(Boolean)) : null;
 
   execute(
@@ -437,7 +458,11 @@ router.put('/:id', (req: Request, res: Response) => {
   if (port !== undefined) { updates.push('port = ?'); params.push(port); }
   if (username !== undefined) { updates.push('username = ?'); params.push(username || null); }
   if (password) { updates.push('encrypted_password = ?'); params.push(encrypt(password)); }
-  if (privateKey !== undefined) { updates.push('private_key = ?'); params.push(privateKey ? encrypt(privateKey) : null); }
+  if (privateKey !== undefined) {
+    const inlineKey = prepareInlineKey(privateKey);
+    if ('error' in inlineKey) { res.status(400).json({ error: inlineKey.error }); return; }
+    updates.push('private_key = ?'); params.push(inlineKey.key ? encrypt(inlineKey.key) : null);
+  }
   if (groupId !== undefined) { updates.push('group_id = ?'); params.push(groupId || null); }
   if (shared !== undefined) { updates.push('shared = ?'); params.push(shared ? 1 : 0); }
   if (tunnels !== undefined) { updates.push('tunnels_json = ?'); params.push(tunnels ? JSON.stringify(tunnels) : null); }
