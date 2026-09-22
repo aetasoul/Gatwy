@@ -5,10 +5,10 @@ import { queryAll, queryOne, execute } from '../db/helpers.js';
 import { authRequired, userCan } from '../middleware/auth.js';
 import { encrypt, decrypt } from '../services/encryption.js';
 import { logAudit } from '../services/audit.js';
-import { applyCredential, checkCredentialAssignable, isConnectionShared } from '../services/credentials.js';
+import { applyCredential, checkCredentialAssignable, connectionsWithUnshareableCredential, isConnectionShared } from '../services/credentials.js';
 import { prepareKey } from '../services/sshKeys.js';
 import { filterListedConnections, isMoonlightWebAvailable, runtimeFeatures } from '../services/moonlightWeb.js';
-import { accessibleSharedGroupIds, connectionAccessWhere } from '../services/permissions.js';
+import { accessibleSharedGroupIds, connectionAccessWhere, descendantGroupIds, groupOwnedBy } from '../services/permissions.js';
 
 const ALL_PROTOCOLS = ['ssh', 'rdp', 'smb', 'vnc', 'moonlight', 'sftp', 'ftp', 'telnet', 'postgres', 'mysql'] as const;
 
@@ -381,12 +381,9 @@ router.post('/', (req: Request, res: Response) => {
 
   // A connection can only be filed under a folder its creator owns — otherwise it could be
   // planted into a folder shared to the creator, surfacing it to everyone that folder is shared with.
-  if (groupId) {
-    const targetGroup = queryOne<{ user_id: string }>('SELECT user_id FROM connection_groups WHERE id = ?', [groupId]);
-    if (!targetGroup || targetGroup.user_id !== userId) {
-      res.status(400).json({ error: 'Invalid folder' });
-      return;
-    }
+  if (groupId && !groupOwnedBy(groupId, userId)) {
+    res.status(400).json({ error: 'Invalid folder' });
+    return;
   }
 
   // Validate VNC pointer scale: factor = 100/percent, valid percent range [50, 400] → factor [0.25, 2]
@@ -521,12 +518,9 @@ router.put('/:id', (req: Request, res: Response) => {
 
   // A connection can only be filed under a folder its owner owns — otherwise it could be
   // planted into a folder shared to the owner, surfacing it to everyone that folder is shared with.
-  if (groupId) {
-    const targetGroup = queryOne<{ user_id: string }>('SELECT user_id FROM connection_groups WHERE id = ?', [groupId]);
-    if (!targetGroup || targetGroup.user_id !== existing.user_id) {
-      res.status(400).json({ error: 'Invalid folder' });
-      return;
-    }
+  if (groupId && !groupOwnedBy(groupId, existing.user_id)) {
+    res.status(400).json({ error: 'Invalid folder' });
+    return;
   }
 
   // Validate the credential the connection will use after this update — a newly
@@ -790,12 +784,9 @@ router.post('/groups', (req: Request, res: Response) => {
   // A group can only be nested under a folder its creator owns — otherwise it could be
   // grafted onto a folder shared to the creator, surfacing it (and everything inside) to
   // everyone that folder is shared with.
-  if (parentId) {
-    const parentGroup = queryOne<{ user_id: string }>('SELECT user_id FROM connection_groups WHERE id = ?', [parentId]);
-    if (!parentGroup || parentGroup.user_id !== userId) {
-      res.status(400).json({ error: 'Invalid parent folder' });
-      return;
-    }
+  if (parentId && !groupOwnedBy(parentId, userId)) {
+    res.status(400).json({ error: 'Invalid parent folder' });
+    return;
   }
 
   const id = uuid();
@@ -821,12 +812,9 @@ router.put('/groups/:id', (req: Request, res: Response) => {
   // A group's parent must belong to the same owner as the group itself — not the caller —
   // otherwise an `edit_any` admin reparenting someone else's group under their own folder
   // (or the owner reparenting under a folder shared to them) grafts it into that share.
-  if (parentId) {
-    const parentGroup = queryOne<{ user_id: string }>('SELECT user_id FROM connection_groups WHERE id = ?', [parentId]);
-    if (!parentGroup || parentGroup.user_id !== group.user_id) {
-      res.status(400).json({ error: 'Invalid parent folder' });
-      return;
-    }
+  if (parentId && !groupOwnedBy(parentId, group.user_id)) {
+    res.status(400).json({ error: 'Invalid parent folder' });
+    return;
   }
 
   const updates: string[] = [];
@@ -910,7 +898,13 @@ router.put('/groups/:id/shares', (req: Request, res: Response) => {
   const { shares } = req.body as { shares: { shareType: string; targetId: string }[] };
   if (!Array.isArray(shares)) { res.status(400).json({ error: 'shares array required' }); return; }
 
+  const before = queryAll<{ share_type: string; target_id: string }>(
+    'SELECT share_type, target_id FROM group_shares WHERE group_id = ? ORDER BY share_type, target_id',
+    [id],
+  ).map((s) => ({ shareType: s.share_type, targetId: s.target_id }));
+
   execute('DELETE FROM group_shares WHERE group_id = ?', [id]);
+  const after: { shareType: string; targetId: string }[] = [];
   for (const s of shares) {
     if (s.shareType !== 'role' && s.shareType !== 'user') continue;
     if (!s.targetId) continue;
@@ -919,8 +913,29 @@ router.put('/groups/:id/shares', (req: Request, res: Response) => {
       'INSERT INTO group_shares (id, group_id, share_type, target_id) VALUES (?, ?, ?, ?)',
       [sid, id, s.shareType, s.targetId],
     );
+    after.push({ shareType: s.shareType, targetId: s.targetId });
   }
-  res.json({ success: true });
+
+  logAudit({
+    userId,
+    eventType: 'group.shares_updated',
+    target: id,
+    details: { before, after },
+    ipAddress: req.ip,
+  });
+
+  // Folder sharing never re-validates each connection's credential the way per-connection
+  // sharing does — a private library credential inside just goes null for recipients
+  // (applyCredential's defence in depth) instead of erroring. Surface that clearly rather
+  // than let it look like the connection is simply broken.
+  let warnings: { connectionId: string; connectionName: string }[] = [];
+  if (after.length > 0) {
+    const groupIds = descendantGroupIds(id);
+    warnings = connectionsWithUnshareableCredential(groupIds)
+      .map((c) => ({ connectionId: c.id, connectionName: c.name }));
+  }
+
+  res.json({ success: true, warnings });
 });
 
 // --- Connection Shares ---

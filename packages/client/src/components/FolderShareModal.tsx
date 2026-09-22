@@ -14,6 +14,7 @@ export function FolderShareModal({ groupId, groupName, onClose }: FolderShareMod
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
+  const [warnings, setWarnings] = useState<{ connectionId: string; connectionName: string }[] | null>(null);
 
   useEffect(() => {
     fetch('/api/v1/roles', { credentials: 'include' })
@@ -55,6 +56,14 @@ export function FolderShareModal({ groupId, groupName, onClose }: FolderShareMod
       if (!res.ok) {
         const d = await res.json().catch(() => ({}));
         setError(d.error || 'Failed to save');
+        setSaving(false);
+        return;
+      }
+      const d = await res.json().catch(() => ({}));
+      if (Array.isArray(d.warnings) && d.warnings.length > 0) {
+        // Saved, but hold the modal open — these connections use a private library
+        // credential, so recipients will see them with no working credentials at all.
+        setWarnings(d.warnings);
         setSaving(false);
         return;
       }
@@ -126,25 +135,51 @@ export function FolderShareModal({ groupId, groupName, onClose }: FolderShareMod
             </>
           )}
 
+          {warnings && warnings.length > 0 && (
+            <div className="rounded border border-amber-500/40 bg-amber-500/10 px-3 py-2">
+              <p className="text-xs font-medium text-amber-600 dark:text-amber-400">
+                Shares saved, but {warnings.length} connection{warnings.length === 1 ? '' : 's'} won't work for recipients:
+              </p>
+              <ul className="mt-1 text-xs text-text-secondary list-disc list-inside">
+                {warnings.map(w => <li key={w.connectionId}>{w.connectionName}</li>)}
+              </ul>
+              <p className="mt-1 text-[11px] text-text-secondary">
+                They use a private credential from your Credential Library — mark it as shared, or recipients will see no credentials at all.
+              </p>
+            </div>
+          )}
+
           {error && <p className="text-red-500 text-xs">{error}</p>}
         </div>
 
         <div className="flex gap-2 px-5 pb-4 pt-1">
-          <button
-            type="button"
-            onClick={onClose}
-            className="flex-1 py-1.5 text-sm border border-border rounded text-text-secondary hover:bg-surface-hover"
-          >
-            Cancel
-          </button>
-          <button
-            type="button"
-            onClick={handleSave}
-            disabled={saving || loading}
-            className="flex-1 py-1.5 text-sm bg-accent text-white rounded hover:bg-accent-hover disabled:opacity-50 font-medium"
-          >
-            {saving ? 'Saving...' : 'Save'}
-          </button>
+          {warnings && warnings.length > 0 ? (
+            <button
+              type="button"
+              onClick={onClose}
+              className="flex-1 py-1.5 text-sm bg-accent text-white rounded hover:bg-accent-hover font-medium"
+            >
+              Close
+            </button>
+          ) : (
+            <>
+              <button
+                type="button"
+                onClick={onClose}
+                className="flex-1 py-1.5 text-sm border border-border rounded text-text-secondary hover:bg-surface-hover"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={handleSave}
+                disabled={saving || loading}
+                className="flex-1 py-1.5 text-sm bg-accent text-white rounded hover:bg-accent-hover disabled:opacity-50 font-medium"
+              >
+                {saving ? 'Saving...' : 'Save'}
+              </button>
+            </>
+          )}
         </div>
       </div>
     </div>

@@ -935,20 +935,6 @@ function runMigrations() {
     },
     {
       version: 20,
-      sql: `
-        CREATE TABLE IF NOT EXISTS group_shares (
-          id TEXT PRIMARY KEY,
-          group_id TEXT NOT NULL REFERENCES connection_groups(id) ON DELETE CASCADE,
-          share_type TEXT NOT NULL CHECK(share_type IN ('role', 'user')),
-          target_id TEXT NOT NULL,
-          created_at TEXT NOT NULL DEFAULT (datetime('now'))
-        );
-        CREATE INDEX IF NOT EXISTS idx_group_shares_group ON group_shares(group_id);
-        CREATE INDEX IF NOT EXISTS idx_group_shares_target ON group_shares(share_type, target_id);
-      `,
-    },
-    {
-      version: 21,
       run: (database: Database) => {
         // Credential library: reusable username/password or username/key sets
         // that connections can reference instead of storing inline credentials.
@@ -986,12 +972,26 @@ function runMigrations() {
       },
     },
     {
-      version: 22,
+      version: 21,
       run: (database: Database) => {
         // Optional NTLM domain on password credentials — SMB (and any future
         // domain-aware protocol) can use it instead of retyping it per connection.
         try { database.run('ALTER TABLE credentials ADD COLUMN domain TEXT'); } catch { /* already exists */ }
       },
+    },
+    {
+      version: 22,
+      sql: `
+        CREATE TABLE IF NOT EXISTS group_shares (
+          id TEXT PRIMARY KEY,
+          group_id TEXT NOT NULL REFERENCES connection_groups(id) ON DELETE CASCADE,
+          share_type TEXT NOT NULL CHECK(share_type IN ('role', 'user')),
+          target_id TEXT NOT NULL,
+          created_at TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+        CREATE INDEX IF NOT EXISTS idx_group_shares_group ON group_shares(group_id);
+        CREATE INDEX IF NOT EXISTS idx_group_shares_target ON group_shares(share_type, target_id);
+      `,
     },
   ];
 

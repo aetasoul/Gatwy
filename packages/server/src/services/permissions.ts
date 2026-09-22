@@ -123,17 +123,26 @@ export function userHasPermission(userId: string, perm: PermissionKey): boolean 
 }
 
 /**
- * All connection_group IDs reachable via a folder share to this user/role: the directly
- * shared groups plus every descendant. Resolved fresh on every call (never materialized
- * into per-connection rows), so a new sub-folder or a new connection dropped into an
- * already-shared folder inherits access immediately — no share row needs to be copied.
+ * Whether the connection_groups row `groupId` exists and is owned by `ownerId`.
+ * Single source of truth for the cross-owner nesting guard: a connection or a
+ * sub-folder may only be filed under / reparented onto a folder its own owner
+ * holds — never a folder merely shared to them — or it would be grafted into
+ * whatever that folder is shared with.
  */
-export function accessibleSharedGroupIds(userId: string, role: string): string[] {
-  const directRows = queryAll<{ group_id: string }>(
-    `SELECT DISTINCT group_id FROM group_shares WHERE (share_type = 'user' AND target_id = ?) OR (share_type = 'role' AND target_id = ?)`,
-    [userId, role],
-  );
-  if (directRows.length === 0) return [];
+export function groupOwnedBy(groupId: string, ownerId: string): boolean {
+  const row = queryOne<{ user_id: string }>('SELECT user_id FROM connection_groups WHERE id = ?', [groupId]);
+  return !!row && row.user_id === ownerId;
+}
+
+/**
+ * BFS from `rootIds` through connection_groups, descending into a child only when its
+ * owner matches its parent's owner — a group grafted (via parent_id) under someone
+ * else's folder must never inherit whatever that folder is reachable through.
+ * Shared by accessibleSharedGroupIds (roots = directly-shared groups) and
+ * descendantGroupIds (root = a single folder, e.g. the one just being shared).
+ */
+function ownerScopedDescendants(rootIds: string[]): string[] {
+  if (rootIds.length === 0) return [];
 
   const allGroups = queryAll<{ id: string; parent_id: string | null; user_id: string }>(
     'SELECT id, parent_id, user_id FROM connection_groups',
@@ -147,10 +156,12 @@ export function accessibleSharedGroupIds(userId: string, role: string): string[]
     childrenOf.set(g.parent_id, list);
   }
 
-  // Only descend into a child whose owner matches its parent's owner — a group grafted
-  // (via parent_id) under someone else's folder must never inherit that folder's share.
+  // A root that no longer exists (deleted group, stale share row) seeds nothing.
+  const validRoots = rootIds.filter((id) => ownerOf.has(id));
+  if (validRoots.length === 0) return [];
+
   const result = new Set<string>();
-  const queue = directRows.map((r) => r.group_id);
+  const queue = [...validRoots];
   while (queue.length > 0) {
     const gid = queue.pop()!;
     if (result.has(gid)) continue;
@@ -161,6 +172,30 @@ export function accessibleSharedGroupIds(userId: string, role: string): string[]
     }
   }
   return [...result];
+}
+
+/**
+ * All connection_group IDs reachable via a folder share to this user/role: the directly
+ * shared groups plus every descendant. Resolved fresh on every call (never materialized
+ * into per-connection rows), so a new sub-folder or a new connection dropped into an
+ * already-shared folder inherits access immediately — no share row needs to be copied.
+ */
+export function accessibleSharedGroupIds(userId: string, role: string): string[] {
+  const directRows = queryAll<{ group_id: string }>(
+    `SELECT DISTINCT group_id FROM group_shares WHERE (share_type = 'user' AND target_id = ?) OR (share_type = 'role' AND target_id = ?)`,
+    [userId, role],
+  );
+  return ownerScopedDescendants(directRows.map((r) => r.group_id));
+}
+
+/**
+ * A folder plus every owner-scoped descendant beneath it — the full subtree that
+ * becomes reachable when `rootId` itself is shared, regardless of who it's shared with.
+ * Used to scan the about-to-be-shared subtree for connections whose credentials won't
+ * actually be visible to the recipients (see connectionsWithUnshareableCredential).
+ */
+export function descendantGroupIds(rootId: string): string[] {
+  return ownerScopedDescendants([rootId]);
 }
 
 /**
