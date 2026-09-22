@@ -226,6 +226,7 @@ export function ConnectionModal({ connection, groups, onClose, onSaved, prefill,
   const [tunnels, setTunnels] = useState<TunnelDef[]>(prefill?.tunnels ?? []);
   const [smbShare, setSmbShare] = useState(prefill?.smbShare ?? '');
   const [smbDomain, setSmbDomain] = useState(prefill?.smbDomain ?? '');
+  const [ftpsEnabled, setFtpsEnabled] = useState(false);
   const [vncScaleChoice, setVncScaleChoice] = useState(() => choiceForVncPercent(parseInt(prefill?.vncDesktopScale ?? '100', 10) || 100));
   const [vncCustomScale, setVncCustomScale] = useState(prefill?.vncDesktopScale ?? '125');
   // DB-specific fields
@@ -284,6 +285,7 @@ export function ConnectionModal({ connection, groups, onClose, onSaved, prefill,
         })));
         if (d.extraConfig?.share) setSmbShare(d.extraConfig.share as string);
         if (d.extraConfig?.domain) setSmbDomain(d.extraConfig.domain as string);
+        if (d.extraConfig?.ftps) setFtpsEnabled(true);
         if (d.extraConfig?.defaultDatabase) setDbDatabase(d.extraConfig.defaultDatabase as string);
         if (d.extraConfig?.sslMode) setDbSslMode(d.extraConfig.sslMode as typeof dbSslMode);
         if (d.extraConfig?.rowLimit) setDbRowLimit(String(d.extraConfig.rowLimit));
@@ -399,6 +401,10 @@ export function ConnectionModal({ connection, groups, onClose, onSaved, prefill,
       }
       if (protocol === 'smb') {
         body.extraConfig = { share: smbShare.trim(), ...(smbDomain.trim() ? { domain: smbDomain.trim() } : {}) };
+      }
+      if (protocol === 'ftp') {
+        body.extraConfig = ftpsEnabled ? { ftps: true } : null;
+        if (ftpsEnabled) body.skipCertValidation = skipCertValidation;
       }
       if (protocol === 'postgres' || protocol === 'mysql') {
         if (!dbDatabase.trim()) { setError('Default Database is required for database connections'); setSaving(false); return; }
@@ -695,7 +701,33 @@ export function ConnectionModal({ connection, groups, onClose, onSaved, prefill,
             </div>
           )}
 
-          {protocol === 'rdp' && (
+          {protocol === 'ftp' && (
+            <div>
+              <label className="block text-xs font-medium text-text-secondary mb-1">FTPS (FTP over TLS)</label>
+              <div
+                className={`flex items-center gap-2.5 px-3 py-2 rounded border cursor-pointer transition-colors ${
+                  ftpsEnabled ? 'border-green-500/40 bg-green-500/5' : 'border-border bg-surface hover:bg-surface-hover'
+                }`}
+                onClick={() => setFtpsEnabled(!ftpsEnabled)}
+              >
+                <div className={`relative w-8 h-[18px] rounded-full transition-colors ${ftpsEnabled ? 'bg-green-500' : 'bg-zinc-600'}`}>
+                  <div className={`absolute top-[2px] h-[14px] w-[14px] rounded-full bg-white transition-transform ${ftpsEnabled ? 'left-[16px]' : 'left-[2px]'}`} />
+                </div>
+                <div className="flex-1">
+                  <span className="text-xs font-medium text-text-primary">
+                    {ftpsEnabled ? 'FTPS enabled' : 'Plain FTP (unencrypted)'}
+                  </span>
+                  <p className="text-[11px] text-text-secondary mt-0.5 leading-tight">
+                    {ftpsEnabled
+                      ? 'Control and data channels are encrypted with TLS.'
+                      : 'Credentials and data are sent in clear text — use FTPS when possible.'}
+                  </p>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {(protocol === 'rdp' || (protocol === 'ftp' && ftpsEnabled)) && (
             <div>
               <label className="block text-xs font-medium text-text-secondary mb-1">TLS Certificate</label>
               <div
