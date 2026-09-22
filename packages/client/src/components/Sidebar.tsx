@@ -1729,6 +1729,7 @@ export function Sidebar({ onConnect, onConnectMultiple, width }: SidebarProps) {
           groupId={shareFolderTarget.id}
           groupName={shareFolderTarget.name}
           onClose={() => setShareFolderTarget(null)}
+          onSaved={() => { setShareFolderTarget(null); fetchConnections(); }}
         />
       )}
     </>
