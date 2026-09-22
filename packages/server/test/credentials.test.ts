@@ -12,7 +12,7 @@ process.env.GATWY_ENCRYPTION_KEY = crypto.randomBytes(32).toString('hex');
 
 const { initDb, getDb, closeDb } = await import('../src/db/index.js');
 const { execute } = await import('../src/db/helpers.js');
-const { applyCredential, checkCredentialAssignable, isConnectionShared } = await import('../src/services/credentials.js');
+const { applyCredential, checkCredentialAssignable, isConnectionShared, sharedCredentialsInUseByOthers } = await import('../src/services/credentials.js');
 
 const ALICE = 'user-alice';
 const BOB = 'user-bob';
@@ -169,6 +169,25 @@ describe('credential rules', () => {
     it('resolves owner-held credentials for system callers', () => {
       addConnection('conn-system', ALICE, { credentialId: 'cred-alice-private' });
       assert.equal(applyCredential(connRow('conn-system'), null).username, 'cred-alice-private-user');
+    });
+  });
+
+  describe('sharedCredentialsInUseByOthers', () => {
+    it('is empty when nothing of the owner\'s is shared', () => {
+      assert.deepEqual(sharedCredentialsInUseByOthers(BOB), []);
+    });
+
+    it('ignores a shared credential only used by its own owner', () => {
+      addConnection('conn-owner-shared-cred', ALICE, { credentialId: 'cred-alice-shared' });
+      assert.deepEqual(sharedCredentialsInUseByOthers(ALICE), []);
+    });
+
+    it('reports a shared credential used by another user\'s connection', () => {
+      addConnection('conn-other-shared-cred', BOB, { shared: true, credentialId: 'cred-alice-shared' });
+      const blockers = sharedCredentialsInUseByOthers(ALICE);
+      assert.equal(blockers.length, 1);
+      assert.equal(blockers[0]!.id, 'cred-alice-shared');
+      assert.deepEqual(blockers[0]!.connections.map((c) => c.id), ['conn-other-shared-cred']);
     });
   });
 });

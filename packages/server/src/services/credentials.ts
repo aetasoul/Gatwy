@@ -1,4 +1,4 @@
-import { queryOne } from '../db/helpers.js';
+import { queryAll, queryOne } from '../db/helpers.js';
 
 export const CREDENTIAL_TYPES = ['password', 'key'] as const;
 export type CredentialType = typeof CREDENTIAL_TYPES[number];
@@ -58,6 +58,34 @@ export function checkCredentialAssignable(
   if (cred.user_id !== ownerId) return 'Credential not found';
   if (connectionShared) return 'Shared connections can only use shared credentials';
   return null;
+}
+
+export interface SharedCredentialBlocker {
+  id: string;
+  name: string;
+  connections: { id: string; name: string; userId: string }[];
+}
+
+/**
+ * Shared credentials owned by `ownerId` that other users' connections still
+ * reference — deleting this user would cascade-delete these credentials and
+ * silently strip those connections of their working auth. Used to block user
+ * deletion until the credentials are reassigned, un-shared, or those
+ * connections are updated.
+ */
+export function sharedCredentialsInUseByOthers(ownerId: string): SharedCredentialBlocker[] {
+  const creds = queryAll<CredentialRow>('SELECT * FROM credentials WHERE user_id = ? AND shared = 1', [ownerId]);
+  const blockers: SharedCredentialBlocker[] = [];
+  for (const cred of creds) {
+    const conns = queryAll<{ id: string; name: string; user_id: string }>(
+      'SELECT id, name, user_id FROM connections WHERE credential_id = ? AND user_id != ? ORDER BY name COLLATE NOCASE',
+      [cred.id, ownerId],
+    );
+    if (conns.length) {
+      blockers.push({ id: cred.id, name: cred.name, connections: conns.map((c) => ({ id: c.id, name: c.name, userId: c.user_id })) });
+    }
+  }
+  return blockers;
 }
 
 /**
