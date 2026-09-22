@@ -12,7 +12,7 @@ process.env.GATWY_ENCRYPTION_KEY = crypto.randomBytes(32).toString('hex');
 
 const { initDb, getDb, closeDb } = await import('../src/db/index.js');
 const { execute } = await import('../src/db/helpers.js');
-const { applyCredential, checkCredentialAssignable, isConnectionShared, sharedCredentialsInUseByOthers } = await import('../src/services/credentials.js');
+const { applyCredential, checkCredentialAssignable, isConnectionShared, sharedCredentialsInUseByOthers, getCredentialDomain } = await import('../src/services/credentials.js');
 
 const ALICE = 'user-alice';
 const BOB = 'user-bob';
@@ -23,12 +23,12 @@ function addUser(id: string) {
 
 function addCredential(id: string, ownerId: string, shared: boolean, over: Record<string, unknown> = {}) {
   execute(
-    `INSERT INTO credentials (id, user_id, name, type, username, encrypted_password, private_key, encrypted_passphrase, shared)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    `INSERT INTO credentials (id, user_id, name, type, username, encrypted_password, private_key, encrypted_passphrase, shared, domain)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       id, ownerId, id, over.type ?? 'password', over.username ?? `${id}-user`,
       over.encrypted_password ?? 'enc-password', over.private_key ?? null,
-      over.encrypted_passphrase ?? null, shared ? 1 : 0,
+      over.encrypted_passphrase ?? null, shared ? 1 : 0, over.domain ?? null,
     ],
   );
 }
@@ -188,6 +188,21 @@ describe('credential rules', () => {
       assert.equal(blockers.length, 1);
       assert.equal(blockers[0]!.id, 'cred-alice-shared');
       assert.deepEqual(blockers[0]!.connections.map((c) => c.id), ['conn-other-shared-cred']);
+    });
+  });
+
+  describe('getCredentialDomain', () => {
+    it('is null when no credential is linked', () => {
+      assert.equal(getCredentialDomain(null), null);
+    });
+
+    it('is null when the credential has no domain set', () => {
+      assert.equal(getCredentialDomain('cred-alice-private'), null);
+    });
+
+    it('returns the stored domain', () => {
+      addCredential('cred-alice-domain', ALICE, false, { domain: 'CONTOSO' });
+      assert.equal(getCredentialDomain('cred-alice-domain'), 'CONTOSO');
     });
   });
 });

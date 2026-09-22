@@ -44,6 +44,7 @@ export function CredentialsSettings() {
   const [name, setName] = useState('');
   const [type, setType] = useState<CredentialType>('password');
   const [username, setUsername] = useState('');
+  const [domain, setDomain] = useState('');
   const [password, setPassword] = useState('');
   const [privateKey, setPrivateKey] = useState('');
   const [passphrase, setPassphrase] = useState('');
@@ -67,7 +68,7 @@ export function CredentialsSettings() {
 
   function openCreate() {
     setEditing(null);
-    setName(''); setType('password'); setUsername(''); setPassword('');
+    setName(''); setType('password'); setUsername(''); setDomain(''); setPassword('');
     setPrivateKey(''); setPassphrase(''); setClearPassphrase(false); setShared(false);
     setFormError('');
     setFormOpen(true);
@@ -75,7 +76,7 @@ export function CredentialsSettings() {
 
   function openEdit(c: CredentialSummary) {
     setEditing(c);
-    setName(c.name); setType(c.type); setUsername(c.username ?? ''); setPassword('');
+    setName(c.name); setType(c.type); setUsername(c.username ?? ''); setDomain(c.domain ?? ''); setPassword('');
     setPrivateKey(''); setPassphrase(''); setClearPassphrase(false); setShared(c.shared);
     setFormError('');
     setFormOpen(true);
@@ -103,6 +104,7 @@ export function CredentialsSettings() {
     try {
       const body: Record<string, unknown> = { name, username };
       if (!editing) body.type = type;
+      if (type === 'password') body.domain = domain;
       if (type === 'password' && password) body.password = password;
       if (type === 'key') {
         if (privateKey.trim()) body.privateKey = privateKey;
@@ -288,6 +290,17 @@ export function CredentialsSettings() {
                 <input type="text" value={username} onChange={(e) => setUsername(e.target.value)}
                   placeholder="user" autoComplete="off" className={inputCls} />
               </div>
+
+              {type === 'password' && (
+                <div>
+                  <label className="block text-xs text-text-secondary mb-1">
+                    Domain <span className="font-normal">(optional)</span>
+                  </label>
+                  <input type="text" value={domain} onChange={(e) => setDomain(e.target.value)}
+                    placeholder="WORKGROUP" autoComplete="off" className={inputCls} />
+                  <p className="text-[11px] text-text-secondary mt-1">Used for SMB connections instead of retyping it per connection.</p>
+                </div>
+              )}
 
               {type === 'password' ? (
                 <div>

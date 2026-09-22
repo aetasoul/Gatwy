@@ -48,6 +48,7 @@ function toJson(req: Request, c: ListRow) {
     name: c.name,
     type: c.type,
     username: c.username,
+    domain: c.domain,
     shared: c.shared === 1,
     hasPassword: !!c.encrypted_password,
     hasPrivateKey: !!c.private_key,
@@ -80,9 +81,9 @@ router.get('/', (req: Request, res: Response) => {
 // POST / — create a credential
 router.post('/', (req: Request, res: Response) => {
   const userId = req.user!.userId;
-  const { name, type, username, password, privateKey, passphrase, shared } = req.body as {
+  const { name, type, username, password, privateKey, passphrase, shared, domain } = req.body as {
     name?: string; type?: string; username?: string; password?: string;
-    privateKey?: string; passphrase?: string; shared?: boolean;
+    privateKey?: string; passphrase?: string; shared?: boolean; domain?: string;
   };
 
   if (!name?.trim()) { res.status(400).json({ error: 'Name is required' }); return; }
@@ -107,14 +108,15 @@ router.post('/', (req: Request, res: Response) => {
   const id = uuid();
   const isKey = type === 'key';
   execute(
-    `INSERT INTO credentials (id, user_id, name, type, username, encrypted_password, private_key, encrypted_passphrase, shared)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    `INSERT INTO credentials (id, user_id, name, type, username, encrypted_password, private_key, encrypted_passphrase, shared, domain)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       id, userId, name.trim(), type, username?.trim() || null,
       !isKey && password ? encrypt(password) : null,
       key ? encrypt(key.privateKey) : null,
       key?.passphrase ? encrypt(key.passphrase) : null,
       shared ? 1 : 0,
+      !isKey && domain?.trim() ? domain.trim() : null,
     ],
   );
 
@@ -141,9 +143,9 @@ router.put('/:id', (req: Request, res: Response) => {
   }
   if (!canEdit(req, cred)) { res.status(403).json({ error: 'Not authorized' }); return; }
 
-  const { name, username, password, privateKey, passphrase, shared, clearPassword, clearPassphrase } = req.body as {
+  const { name, username, password, privateKey, passphrase, shared, domain, clearPassword, clearPassphrase } = req.body as {
     name?: string; username?: string; password?: string; privateKey?: string; passphrase?: string;
-    shared?: boolean; clearPassword?: boolean; clearPassphrase?: boolean;
+    shared?: boolean; domain?: string; clearPassword?: boolean; clearPassphrase?: boolean;
   };
   const isKey = cred.type === 'key';
 
@@ -183,6 +185,7 @@ router.put('/:id', (req: Request, res: Response) => {
     updates.push('name = ?'); params.push(name.trim());
   }
   if (username !== undefined) { updates.push('username = ?'); params.push(username.trim() || null); }
+  if (!isKey && domain !== undefined) { updates.push('domain = ?'); params.push(domain.trim() || null); }
   if (!isKey) {
     if (password) { updates.push('encrypted_password = ?'); params.push(encrypt(password)); }
     else if (clearPassword) { updates.push('encrypted_password = NULL'); }

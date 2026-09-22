@@ -13,6 +13,7 @@ export interface CredentialRow {
   private_key: string | null;
   encrypted_passphrase: string | null;
   shared: number;
+  domain: string | null;
 }
 
 /** Minimal shape of a connection row needed to resolve its credentials. */
@@ -86,6 +87,16 @@ export function sharedCredentialsInUseByOthers(ownerId: string): SharedCredentia
     }
   }
   return blockers;
+}
+
+/**
+ * Domain (e.g. NTLM domain for SMB) stored on a linked library credential, if
+ * any — lets a credential carry a domain instead of retyping it per connection.
+ */
+export function getCredentialDomain(credentialId: string | null | undefined): string | null {
+  if (!credentialId) return null;
+  const cred = queryOne<{ domain: string | null }>('SELECT domain FROM credentials WHERE id = ?', [credentialId]);
+  return cred?.domain ?? null;
 }
 
 /**

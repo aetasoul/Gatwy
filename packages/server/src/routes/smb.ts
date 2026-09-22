@@ -2,7 +2,7 @@ import { Router, type Request, type Response } from 'express';
 import { queryOne } from '../db/helpers.js';
 import { authRequired, requirePermission } from '../middleware/auth.js';
 import { decrypt } from '../services/encryption.js';
-import { applyCredential } from '../services/credentials.js';
+import { applyCredential, getCredentialDomain } from '../services/credentials.js';
 import { logAudit } from '../services/audit.js';
 import { logFileSessionEvent } from '../services/fileSession.js';
 import { resolveClientIp } from '../services/ip.js';
@@ -57,6 +57,9 @@ function makeSmbClient(conn: ConnRow): SMB2 {
       domain = cfg.domain?.trim() ?? '';
     }
   } catch { /* ignore */ }
+
+  // A linked credential's own domain takes precedence over the connection's.
+  domain = getCredentialDomain(conn.credential_id) || domain;
 
   if (!shareName) {
     throw new Error('SMB share name is not configured. Edit the connection and enter a share name.');

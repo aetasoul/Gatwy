@@ -971,6 +971,14 @@ function runMigrations() {
         }
       },
     },
+    {
+      version: 21,
+      run: (database: Database) => {
+        // Optional NTLM domain on password credentials — SMB (and any future
+        // domain-aware protocol) can use it instead of retyping it per connection.
+        try { database.run('ALTER TABLE credentials ADD COLUMN domain TEXT'); } catch { /* already exists */ }
+      },
+    },
   ];
 
   for (const migration of migrations) {

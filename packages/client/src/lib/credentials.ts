@@ -5,6 +5,7 @@ export interface CredentialSummary {
   name: string;
   type: CredentialType;
   username: string | null;
+  domain: string | null;
   shared: boolean;
   hasPassword: boolean;
   hasPrivateKey: boolean;
