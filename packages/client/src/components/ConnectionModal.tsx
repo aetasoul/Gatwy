@@ -2,6 +2,7 @@ import { useRef, useState, useEffect, type ReactNode, type FormEvent } from 'rea
 import { type Protocol } from '../types/protocol.js';
 import { pointerScaleToPercent } from '../lib/vncPointerMap';
 import { credentialTypesFor, fetchCredentials, type CredentialSummary } from '../lib/credentials';
+import { CredentialPicker } from './CredentialPicker';
 import { useAuth } from '../hooks/useAuth';
 
 const TagRemoveIcon = () => (
@@ -580,26 +581,12 @@ export function ConnectionModal({ connection, groups, onClose, onSaved, prefill,
           {protocol !== 'moonlight' && (
             <div>
               <label className="block text-xs font-medium text-text-secondary mb-1">Credentials</label>
-              <select
+              <CredentialPicker
+                pickableCreds={pickableCreds}
+                selectedCred={selectedCred}
                 value={credentialId}
-                onChange={(e) => setCredentialId(e.target.value)}
-                className="w-full px-2.5 py-1.5 bg-surface border border-border rounded text-sm text-text-primary focus:outline-hidden focus:ring-2 focus:ring-accent"
-              >
-                <option value="">Enter manually</option>
-                {selectedCred && !pickableCreds.includes(selectedCred) && (
-                  <option value={selectedCred.id}>{selectedCred.name} (not allowed here)</option>
-                )}
-                {credentialId && !selectedCred && <option value={credentialId}>(unavailable credential)</option>}
-                {pickableCreds.length > 0 && (
-                  <optgroup label="Credential library">
-                    {pickableCreds.map((c) => (
-                      <option key={c.id} value={c.id}>
-                        {c.name}{c.username ? ` — ${c.username}` : ''}{c.type === 'key' ? ' (key)' : ''}{c.shared ? ' · shared' : ''}
-                      </option>
-                    ))}
-                  </optgroup>
-                )}
-              </select>
+                onChange={setCredentialId}
+              />
               {credentialProblem ? (
                 <p className="text-[11px] text-red-400 mt-1 leading-tight">{credentialProblem}</p>
               ) : selectedCred ? (
