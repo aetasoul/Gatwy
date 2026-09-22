@@ -30,10 +30,11 @@ export function FolderShareModal({ groupId, groupName, onClose }: FolderShareMod
   useEffect(() => {
     fetch(`/api/v1/connections/groups/${groupId}/shares`, { credentials: 'include' })
       .then(r => r.json())
-      .then((d: { shareType: string; targetId: string }[]) => {
-        if (!Array.isArray(d)) return;
-        setSelectedRoles(d.filter(s => s.shareType === 'role').map(s => s.targetId));
-        setSelectedUsers(d.filter(s => s.shareType === 'user').map(s => s.targetId));
+      .then((d: { shares: { shareType: string; targetId: string }[]; warnings: { connectionId: string; connectionName: string }[] }) => {
+        if (!Array.isArray(d.shares)) return;
+        setSelectedRoles(d.shares.filter(s => s.shareType === 'role').map(s => s.targetId));
+        setSelectedUsers(d.shares.filter(s => s.shareType === 'user').map(s => s.targetId));
+        if (Array.isArray(d.warnings) && d.warnings.length > 0) setWarnings(d.warnings);
       })
       .catch(() => {})
       .finally(() => setLoading(false));
@@ -91,6 +92,15 @@ export function FolderShareModal({ groupId, groupName, onClose }: FolderShareMod
         </div>
 
         <div className="flex-1 overflow-y-auto px-5 py-4 space-y-3">
+          <div className="rounded border border-border bg-surface px-3 py-2">
+            <p className="text-[11px] text-text-secondary">
+              Recipients get full connect access to every connection in this folder —
+              including stored usernames and passwords/keys — not just the connection list.
+              Credentials linked to a private Credential Library entry are the one exception
+              (see below if this folder has any).
+            </p>
+          </div>
+
           {loading ? (
             <p className="text-xs text-text-secondary">Loading…</p>
           ) : (

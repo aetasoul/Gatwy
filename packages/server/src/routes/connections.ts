@@ -912,7 +912,14 @@ router.get('/groups/:id/shares', (req: Request, res: Response) => {
     'SELECT id, share_type, target_id, created_at FROM group_shares WHERE group_id = ? ORDER BY share_type, target_id',
     [id],
   );
-  res.json(shares.map(s => ({ id: s.id, shareType: s.share_type, targetId: s.target_id, createdAt: s.created_at })));
+  // Surfaced up front (not just after saving) — this depends only on the folder's
+  // contents, not on who it's shared with, so there's no reason to gate it behind a save.
+  const warnings = connectionsWithUnshareableCredential(descendantGroupIds(id))
+    .map((c) => ({ connectionId: c.id, connectionName: c.name }));
+  res.json({
+    shares: shares.map(s => ({ id: s.id, shareType: s.share_type, targetId: s.target_id, createdAt: s.created_at })),
+    warnings,
+  });
 });
 
 // PUT /groups/:id/shares — replace all shares for a folder
