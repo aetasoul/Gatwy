@@ -135,6 +135,12 @@ function startAutoSave(): void {
   }, 5000);
 }
 
+/** Test-only hook: stop the autosave interval so a short-lived process (e.g. `node --test`)
+ *  can exit. The long-running server never calls this — it relies on process exit handlers. */
+export function stopAutoSave(): void {
+  if (saveTimer) clearInterval(saveTimer);
+}
+
 export async function initDb(): Promise<Database> {
   fs.mkdirSync(path.dirname(config.dbPath), { recursive: true });
 

@@ -1,6 +1,7 @@
 import { Router, type Request, type Response } from 'express';
 import { PassThrough, Readable } from 'stream';
 import * as ftp from 'basic-ftp';
+import type { ConnectionOptions as TlsConnectionOptions } from 'tls';
 import { queryOne } from '../db/helpers.js';
 import { authRequired, requirePermission } from '../middleware/auth.js';
 import { decrypt } from '../services/encryption.js';
@@ -9,6 +10,21 @@ import { logAudit } from '../services/audit.js';
 import { logFileSessionEvent } from '../services/fileSession.js';
 import { resolveClientIp } from '../services/ip.js';
 import { connectionAccessWhere } from '../services/permissions.js';
+
+/**
+ * TLS options for an FTPS control/data connection. Certificate validation is on
+ * (rejectUnauthorized: true) unless the connection was explicitly opted out via
+ * skip_cert_validation — same per-connection flag and semantics as RDP's
+ * skip_cert_validation (rdpProxy.ts), instead of the previous unconditional
+ * rejectUnauthorized: false for every FTPS connection.
+ */
+export function ftpsSecureOptions(useFtps: boolean, skipCertValidation: number): TlsConnectionOptions | undefined {
+  if (!useFtps) return undefined;
+  return {
+    rejectUnauthorized: skipCertValidation !== 1,
+    ...(skipCertValidation === 1 ? { checkServerIdentity: () => undefined } : {}),
+  };
+}
 
 const router = Router();
 router.use(authRequired);
@@ -23,13 +39,14 @@ interface ConnRow {
   user_id: string;
   shared: number;
   extra_config_json: string | null;
+  skip_cert_validation: number;
   credential_id: string | null;
 }
 
 function getConn(connectionId: string, userId: string, role: string): ConnRow | null {
   const access = connectionAccessWhere('connections', userId, role);
   const conn = queryOne<ConnRow>(
-    `SELECT id, host, port, username, encrypted_password, user_id, shared, extra_config_json, credential_id
+    `SELECT id, host, port, username, encrypted_password, user_id, shared, extra_config_json, skip_cert_validation, credential_id
      FROM connections
      WHERE id = ? AND ${access.where} AND protocol = 'ftp'`,
     [connectionId, ...access.params],
@@ -57,7 +74,7 @@ async function makeFtpClient(conn: ConnRow): Promise<ftp.Client> {
     user: conn.username || 'anonymous',
     password,
     secure: useFtps,
-    secureOptions: useFtps ? { rejectUnauthorized: false } : undefined,
+    secureOptions: ftpsSecureOptions(useFtps, conn.skip_cert_validation),
   });
   return client;
 }

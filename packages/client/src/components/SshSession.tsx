@@ -264,10 +264,13 @@ export function SshSession({ tab, isActive, paneWidth, paneHeight, onStatusChang
       onContextMenu={async (e) => {
         e.preventDefault();
         const ws = wsRef.current;
-        if (!ws || ws.readyState !== WebSocket.OPEN) return;
+        const term = terminalRef.current;
+        if (!ws || ws.readyState !== WebSocket.OPEN || !term) return;
         try {
           const text = await navigator.clipboard.readText();
-          if (text) ws.send(JSON.stringify({ type: 'data', data: text }));
+          // term.paste() normalizes line endings to \r and applies bracketed paste —
+          // sending raw clipboard text over the socket breaks multi-line paste (nano etc.)
+          if (text) term.paste(text);
         } catch { /* clipboard access denied */ }
       }}
     >

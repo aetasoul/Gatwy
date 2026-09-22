@@ -46,7 +46,15 @@ export function signToken(payload: JwtPayload, maxMinutes?: number): string {
 }
 
 export function verifyToken(token: string): JwtPayload {
-  return jwt.verify(token, secret) as JwtPayload;
+  const payload = jwt.verify(token, secret) as JwtPayload;
+  // Session tokens from signToken() never carry a `type` claim — only special-purpose
+  // tokens (e.g. the pre-2FA `mfa` token from signMfaToken) do. Reject any of those here:
+  // they have no row in login_sessions, which authRequired's fail-open on 'not_found'
+  // would otherwise accept as a fully authenticated session, skipping the second factor.
+  if (payload.type) {
+    throw new Error('Invalid token type');
+  }
+  return payload;
 }
 
 export function signMfaToken(userId: string): string {

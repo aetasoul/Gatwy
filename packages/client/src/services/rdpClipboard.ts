@@ -102,7 +102,7 @@ export class RdpClipboardService {
   }
 
   startMonitoring(): void {
-    if (this.apiSupport === ClipboardApiSupport.Full) {
+    if (this.apiSupport === ClipboardApiSupport.Full || this.apiSupport === ClipboardApiSupport.TextOnly) {
       this.scheduleMonitor();
     }
   }
@@ -236,70 +236,102 @@ export class RdpClipboardService {
   }
 
   private async monitorClipboard(): Promise<void> {
-    let stopped = false;
     try {
       if (this.monitoringSuppressed || !document.hasFocus()) return;
 
-      const clipboardItems = await navigator.clipboard.read();
-      if (clipboardItems.length === 0) return;
-
-      const item = clipboardItems[0];
-      if (!item.types.some((t: string) => t.startsWith('text/') || t === 'image/png')) return;
-
-      const values: Record<string, string | Uint8Array> = {};
-      let changed = false;
-
-      for (const kind of item.types) {
-        const isText = kind.startsWith('text/');
-        const blob = await item.getType(kind);
-        const value: string | Uint8Array = isText
-          ? await blob.text()
-          : new Uint8Array(await blob.arrayBuffer());
-
-        const prev = this.lastClientClipboardItems[kind];
-        if (!this.isEqual(prev, value)) {
-          if (this.isEqual(this.lastReceivedClipboardData[kind], value)) {
-            this.lastClientClipboardItems[kind] = this.lastReceivedClipboardData[kind];
-          } else {
-            changed = true;
-          }
-        }
-
-        values[kind] = value;
-      }
-
-      if (changed && this.session) {
-        this.lastClientClipboardItems = values;
-        const clipData = new this.ClipboardData();
-
-        for (const [key, value] of Object.entries(values)) {
-          if (value == null) continue;
-          if (key.startsWith('text/') && typeof value === 'string') {
-            clipData.addText(key, value);
-          } else if (key.startsWith('image/') && value instanceof Uint8Array) {
-            clipData.addBinary(key, value);
-          }
-        }
-
-        if (!clipData.isEmpty()) {
-          this.lastSentClipboardData = clipData;
-          await this.session.onClipboardPaste(clipData);
-        }
+      if (this.apiSupport === ClipboardApiSupport.Full) {
+        await this.monitorClipboardFull();
+      } else if (this.apiSupport === ClipboardApiSupport.TextOnly) {
+        await this.monitorClipboardTextOnly();
       }
     } catch (err) {
       if (err instanceof DOMException && err.name === 'NotAllowedError') {
+        // Transient — permission may still be 'prompt' or no user gesture
+        // preceded this tick. Downgrade to the lighter readText() fallback
+        // instead of retrying read(), but keep the poll loop alive so sync
+        // resumes once permission is actually granted.
         this.apiSupport = ClipboardApiSupport.TextOnly;
-        stopped = true;
-        return;
-      }
-      const msg = err instanceof Error ? err.message : String(err);
-      if (msg !== this.lastMonitorError) {
-        this.lastMonitorError = msg;
+      } else {
+        const msg = err instanceof Error ? err.message : String(err);
+        if (msg !== this.lastMonitorError) {
+          this.lastMonitorError = msg;
+        }
       }
     } finally {
-      if (!stopped && !this.destroyed) {
+      if (!this.destroyed) {
         this.scheduleMonitor();
       }
+    }
+  }
+
+  private async monitorClipboardFull(): Promise<void> {
+    const clipboardItems = await navigator.clipboard.read();
+    if (clipboardItems.length === 0) return;
+
+    const item = clipboardItems[0];
+    if (!item.types.some((t: string) => t.startsWith('text/') || t === 'image/png')) return;
+
+    const values: Record<string, string | Uint8Array> = {};
+    let changed = false;
+
+    for (const kind of item.types) {
+      const isText = kind.startsWith('text/');
+      const blob = await item.getType(kind);
+      const value: string | Uint8Array = isText
+        ? await blob.text()
+        : new Uint8Array(await blob.arrayBuffer());
+
+      const prev = this.lastClientClipboardItems[kind];
+      if (!this.isEqual(prev, value)) {
+        if (this.isEqual(this.lastReceivedClipboardData[kind], value)) {
+          this.lastClientClipboardItems[kind] = this.lastReceivedClipboardData[kind];
+        } else {
+          changed = true;
+        }
+      }
+
+      values[kind] = value;
+    }
+
+    if (changed && this.session) {
+      this.lastClientClipboardItems = values;
+      await this.sendClipboardValues(values);
+    }
+  }
+
+  /** Fallback loop used when the full Read API is unavailable/denied — text sync only. */
+  private async monitorClipboardTextOnly(): Promise<void> {
+    if (typeof navigator.clipboard.readText !== 'function') return;
+    const text = await navigator.clipboard.readText();
+    if (!text) return;
+
+    const kind = 'text/plain';
+    const prev = this.lastClientClipboardItems[kind];
+    if (this.isEqual(prev, text)) return;
+    if (this.isEqual(this.lastReceivedClipboardData[kind], text)) {
+      this.lastClientClipboardItems[kind] = text;
+      return;
+    }
+
+    this.lastClientClipboardItems = { [kind]: text };
+    if (this.session) await this.sendClipboardValues({ [kind]: text });
+  }
+
+  private async sendClipboardValues(values: Record<string, string | Uint8Array>): Promise<void> {
+    const clipData = new this.ClipboardData();
+
+    for (const [key, value] of Object.entries(values)) {
+      if (value == null) continue;
+      if (key.startsWith('text/') && typeof value === 'string') {
+        clipData.addText(key, value);
+      } else if (key.startsWith('image/') && value instanceof Uint8Array) {
+        clipData.addBinary(key, value);
+      }
+    }
+
+    if (!clipData.isEmpty() && this.session) {
+      this.lastSentClipboardData = clipData;
+      await this.session.onClipboardPaste(clipData);
     }
   }
 

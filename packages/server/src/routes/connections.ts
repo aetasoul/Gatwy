@@ -67,6 +67,24 @@ interface GroupRow {
   sort_order: number;
 }
 
+/** True if the payload asks to create a connection as globally shared without connections.share. */
+function blockedSharedCreate(req: Request, sharedValue: unknown): boolean {
+  return !!sharedValue && !userCan(req, 'connections.share');
+}
+
+/**
+ * True if the payload actually changes the `shared` flag (vs. its current value) and the
+ * caller lacks connections.share. Comparing against the existing value — instead of just
+ * `shared !== undefined` — matters because the connection edit form always sends `shared`
+ * on every save, even when the user didn't touch it; otherwise every edit by a non-sharing
+ * role would 403.
+ */
+function blockedSharedUpdate(req: Request, sharedValue: unknown, existingShared: number): boolean {
+  if (sharedValue === undefined) return false;
+  const next = sharedValue ? 1 : 0;
+  return next !== existingShared && !userCan(req, 'connections.share');
+}
+
 // List connections and groups
 router.get('/', (req: Request, res: Response) => {
   const userId = req.user!.userId;
@@ -305,6 +323,11 @@ router.post('/import', (req: Request, res: Response) => {
     }[];
   };
 
+  if ((connections ?? []).some(c => blockedSharedCreate(req, c.shared))) {
+    res.status(403).json({ error: 'Sharing permission required' });
+    return;
+  }
+
   let groupsCreated = 0;
   let connectionsCreated = 0;
   let credentialsLinked = 0;
@@ -368,6 +391,11 @@ router.post('/', (req: Request, res: Response) => {
   }
 
   const { name, protocol, host, port, username, password, groupId, privateKey, extraConfig, shared, tunnels, tags, skipCertValidation, credentialId } = req.body;
+
+  if (blockedSharedCreate(req, shared)) {
+    res.status(403).json({ error: 'Sharing permission required' });
+    return;
+  }
 
   if (!name || !protocol || !host || !port) {
     res.status(400).json({ error: 'Name, protocol, host, and port are required' });
@@ -510,6 +538,11 @@ router.put('/:id', (req: Request, res: Response) => {
   };
 
   const { name, protocol, host, port, username, password, groupId, privateKey, shared, tunnels, extraConfig, tags, skipCertValidation, credentialId } = req.body;
+
+  if (blockedSharedUpdate(req, shared, existing.shared)) {
+    res.status(403).json({ error: 'Sharing permission required' });
+    return;
+  }
 
   if (protocol !== undefined && !createProtocols().includes(protocol)) {
     res.status(400).json({ error: 'Invalid protocol' });
