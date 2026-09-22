@@ -95,6 +95,18 @@ router.get('/', (req: Request, res: Response) => {
     [userId],
   );
 
+  // Which of the caller's own folders have been directly shared out (not just reachable
+  // via an ancestor's share) — lets the client mark them for the owner without exposing
+  // the recipient list itself.
+  const ownSharedGroupIdSet = new Set<string>();
+  if (groups.length > 0) {
+    const ownGroupPlaceholders = groups.map(() => '?').join(',');
+    queryAll<{ group_id: string }>(
+      `SELECT DISTINCT group_id FROM group_shares WHERE group_id IN (${ownGroupPlaceholders})`,
+      groups.map((g) => g.id),
+    ).forEach((r) => ownSharedGroupIdSet.add(r.group_id));
+  }
+
   const connections = filterListedConnections(queryAll<ConnectionRow>(
     'SELECT id, name, protocol, host, port, group_id, username, sort_order, shared, tags FROM connections WHERE user_id = ? ORDER BY sort_order, name COLLATE NOCASE ASC',
     [userId],
@@ -146,12 +158,13 @@ router.get('/', (req: Request, res: Response) => {
     parentId: string | null;
     children: GroupNode[];
     connections: { id: string; name: string; protocol: string; host: string; port: number; groupId: string | null; isShared: boolean; tags: string[] }[];
+    isSharedOut: boolean;
   }
 
   function buildTree(rows: GroupRow[]): { map: Map<string, GroupNode>; roots: GroupNode[] } {
     const map = new Map<string, GroupNode>();
     for (const g of rows) {
-      map.set(g.id, { id: g.id, name: g.name, parentId: g.parent_id, children: [], connections: [] });
+      map.set(g.id, { id: g.id, name: g.name, parentId: g.parent_id, children: [], connections: [], isSharedOut: ownSharedGroupIdSet.has(g.id) });
     }
     const roots: GroupNode[] = [];
     for (const g of map.values()) {

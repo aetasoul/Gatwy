@@ -14,6 +14,8 @@ interface ConnectionGroup {
   parentId: string | null;
   children: ConnectionGroup[];
   connections: Connection[];
+  /** True when this owner has directly shared this folder with a role/user. */
+  isSharedOut?: boolean;
 }
 
 interface Connection {
@@ -105,9 +107,17 @@ const TrashIcon = ({ size = 12 }: { size?: number }) => (
   </svg>
 );
 
-const FolderIcon = ({ size = 13 }: { size?: number }) => (
-  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="shrink-0">
+const FolderIcon = ({ size = 13, className }: { size?: number; className?: string }) => (
+  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className={clsx('shrink-0', className)}>
     <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" />
+  </svg>
+);
+
+const SharedFolderBadge = () => (
+  <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" className="shrink-0 text-accent">
+    <path d="M4 12v8a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-8" />
+    <polyline points="16 6 12 2 8 6" />
+    <line x1="12" y1="2" x2="12" y2="15" />
   </svg>
 );
 
@@ -434,7 +444,9 @@ export function Sidebar({ onConnect, onConnectMultiple, width }: SidebarProps) {
     const connCount = count(group);
     // Hover/fine pointer: only folders with connections confirm.
     // Coarse/no-hover: always confirm, including empty folders, because trash is always visible.
-    if (connCount > 0 || isMobile) {
+    // A shared folder always confirms too — deleting it revokes access for everyone
+    // it's shared with, even if it happens to be empty right now.
+    if (connCount > 0 || isMobile || group.isSharedOut) {
       setDeleteFolderConfirm({ kind: 'group', group, connCount });
     } else {
       void confirmDeleteGroup(group.id);
@@ -1028,7 +1040,12 @@ export function Sidebar({ onConnect, onConnectMultiple, width }: SidebarProps) {
           >
             <path d="M9 18l6-6-6-6" />
           </svg>
-          <FolderIcon />
+          <FolderIcon className={!readOnly && group.isSharedOut ? 'text-accent' : undefined} />
+          {!readOnly && group.isSharedOut && (
+            <span title="Shared with others">
+              <SharedFolderBadge />
+            </span>
+          )}
           {!readOnly && renamingGroupId === group.id ? (
             <input
               autoFocus
@@ -1471,6 +1488,11 @@ export function Sidebar({ onConnect, onConnectMultiple, width }: SidebarProps) {
                 <h3 className="text-sm font-semibold text-text-primary mb-1">
                   Delete "{deleteFolderConfirm.kind === 'connection' ? deleteFolderConfirm.conn.name : deleteFolderConfirm.group.name}"?
                 </h3>
+                {deleteFolderConfirm.kind === 'group' && deleteFolderConfirm.group.isSharedOut && (
+                  <p className="text-xs font-medium text-amber-500 leading-relaxed mb-1.5">
+                    This folder is shared with others — deleting it will remove their access too.
+                  </p>
+                )}
                 {deleteFolderConfirm.kind === 'group' && deleteFolderConfirm.connCount > 0 ? (
                   <p className="text-xs text-text-secondary leading-relaxed">
                     This folder contains <span className="font-semibold text-red-400">{deleteFolderConfirm.connCount} connection{deleteFolderConfirm.connCount !== 1 ? 's' : ''}</span>.
