@@ -16,10 +16,11 @@ import type { Server } from 'http';
 // has no external network dependency (unlike database.ts's Postgres/MySQL pools),
 // so a full end-to-end test is proportionate here.
 
-process.env.DATA_DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'gatwy-connshare-test-'));
+const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'gatwy-connshare-test-'));
+process.env.DATA_DIR = dataDir;
 process.env.JWT_SECRET = 'connections-share-permission-test-secret';
 
-const { initDb } = await import('../src/db/index.js');
+const { initDb, closeDb } = await import('../src/db/index.js');
 const { execute, queryOne } = await import('../src/db/helpers.js');
 const { initJwt, signToken } = await import('../src/services/jwt.js');
 const { default: connectionsRouter } = await import('../src/routes/connections.js');
@@ -86,7 +87,12 @@ before(async () => {
   baseUrl = `http://127.0.0.1:${port}/api/v1/connections`;
 });
 
-after(() => new Promise<void>((resolve) => server.close(() => resolve())));
+after(() => new Promise<void>((resolve) => server.close(() => {
+  // Without this the autosave interval (see closeDb in db/index.ts) keeps node --test alive.
+  closeDb();
+  fs.rmSync(dataDir, { recursive: true, force: true });
+  resolve();
+})));
 
 function authedFetch(token: string, url: string, init: RequestInit = {}): Promise<Response> {
   return fetch(url, {
