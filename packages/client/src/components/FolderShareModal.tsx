@@ -15,6 +15,9 @@ export function FolderShareModal({ groupId, groupName, onClose }: FolderShareMod
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
   const [warnings, setWarnings] = useState<{ connectionId: string; connectionName: string }[] | null>(null);
+  // Distinguishes a warning surfaced proactively (on open) from one confirmed by an
+  // actual save — only the latter should change the wording/footer to a "saved" state.
+  const [justSaved, setJustSaved] = useState(false);
 
   useEffect(() => {
     fetch('/api/v1/roles', { credentials: 'include' })
@@ -61,6 +64,7 @@ export function FolderShareModal({ groupId, groupName, onClose }: FolderShareMod
         return;
       }
       const d = await res.json().catch(() => ({}));
+      setJustSaved(true);
       if (Array.isArray(d.warnings) && d.warnings.length > 0) {
         // Saved, but hold the modal open — these connections use a private library
         // credential, so recipients will see them with no working credentials at all.
@@ -86,8 +90,9 @@ export function FolderShareModal({ groupId, groupName, onClose }: FolderShareMod
       >
         <div className="px-5 pt-4 pb-2 border-b border-border">
           <h2 className="text-base font-bold text-text-primary">Share Folder</h2>
-          <p className="text-xs text-text-secondary mt-0.5 truncate">
-            "{groupName}" — sub-folders and connections are included, now and later
+          <p className="text-xs text-text-secondary mt-0.5">
+            "{groupName}" — sub-folders, connections, and their <strong className="font-semibold text-text-primary">credentials</strong> are
+            included, now and later.
           </p>
         </div>
 
@@ -148,7 +153,7 @@ export function FolderShareModal({ groupId, groupName, onClose }: FolderShareMod
           {warnings && warnings.length > 0 && (
             <div className="rounded border border-amber-500/40 bg-amber-500/10 px-3 py-2">
               <p className="text-xs font-medium text-amber-600 dark:text-amber-400">
-                Shares saved, but {warnings.length} connection{warnings.length === 1 ? '' : 's'} won't work for recipients:
+                {justSaved ? 'Shares saved, but ' : ''}{warnings.length} connection{warnings.length === 1 ? '' : 's'} won't work for recipients:
               </p>
               <ul className="mt-1 text-xs text-text-secondary list-disc list-inside">
                 {warnings.map(w => <li key={w.connectionId}>{w.connectionName}</li>)}
@@ -163,33 +168,21 @@ export function FolderShareModal({ groupId, groupName, onClose }: FolderShareMod
         </div>
 
         <div className="flex gap-2 px-5 pb-4 pt-1">
-          {warnings && warnings.length > 0 ? (
-            <button
-              type="button"
-              onClick={onClose}
-              className="flex-1 py-1.5 text-sm bg-accent text-white rounded hover:bg-accent-hover font-medium"
-            >
-              Close
-            </button>
-          ) : (
-            <>
-              <button
-                type="button"
-                onClick={onClose}
-                className="flex-1 py-1.5 text-sm border border-border rounded text-text-secondary hover:bg-surface-hover"
-              >
-                Cancel
-              </button>
-              <button
-                type="button"
-                onClick={handleSave}
-                disabled={saving || loading}
-                className="flex-1 py-1.5 text-sm bg-accent text-white rounded hover:bg-accent-hover disabled:opacity-50 font-medium"
-              >
-                {saving ? 'Saving...' : 'Save'}
-              </button>
-            </>
-          )}
+          <button
+            type="button"
+            onClick={onClose}
+            className="flex-1 py-1.5 text-sm border border-border rounded text-text-secondary hover:bg-surface-hover"
+          >
+            {justSaved ? 'Close' : 'Cancel'}
+          </button>
+          <button
+            type="button"
+            onClick={handleSave}
+            disabled={saving || loading}
+            className="flex-1 py-1.5 text-sm bg-accent text-white rounded hover:bg-accent-hover disabled:opacity-50 font-medium"
+          >
+            {saving ? 'Saving...' : 'Save'}
+          </button>
         </div>
       </div>
     </div>
