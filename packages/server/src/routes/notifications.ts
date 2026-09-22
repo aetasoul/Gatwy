@@ -146,10 +146,20 @@ router.post('/channels/:type/test', async (req: Request, res: Response) => {
       const row = queryOne<ChannelRow>('SELECT enabled, config_json FROM notification_channels WHERE id = ?', [type]);
       let existing: Record<string, unknown> = {};
       try { existing = row ? JSON.parse(row.config_json) as Record<string, unknown> : {}; } catch { /* empty */ }
+      const prevUrl = existing[cfgUrlField];
       execute(
         `UPDATE notification_channels SET config_json = ? WHERE id = ?`,
         [JSON.stringify({ ...existing, [cfgUrlField]: safeUrl }), type],
       );
+      if (prevUrl !== safeUrl) {
+        logAudit({
+          userId: req.user!.userId,
+          eventType: 'settings.notifications_channel_updated',
+          target: type,
+          details: { changes: { [cfgUrlField]: { from: prevUrl ? '••••••••' : null, to: '••••••••' } } },
+          ipAddress: req.ip,
+        });
+      }
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       res.status(400).json({ error: msg });
@@ -160,9 +170,23 @@ router.post('/channels/:type/test', async (req: Request, res: Response) => {
 
   try {
     await sendTestNotification(type as ChannelType, overrides);
+    logAudit({
+      userId: req.user!.userId,
+      eventType: 'notifications.channel_tested',
+      target: type,
+      details: { success: true },
+      ipAddress: req.ip,
+    });
     res.json({ ok: true });
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
+    logAudit({
+      userId: req.user!.userId,
+      eventType: 'notifications.channel_tested',
+      target: type,
+      details: { success: false, error: msg },
+      ipAddress: req.ip,
+    });
     res.status(500).json({ error: msg });
   }
 });
@@ -420,9 +444,23 @@ router.post('/log/:id/retry', async (req: Request, res: Response) => {
       timestamp: new Date().toISOString(),
     };
     await dispatch({ ...action, channel: channel as ChannelType }, ctx);
+    logAudit({
+      userId: req.user!.userId,
+      eventType: 'notifications.log_retried',
+      target: `${rule_name} (${channel})`,
+      details: { log_id: id, success: true },
+      ipAddress: req.ip,
+    });
     res.json({ ok: true });
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
+    logAudit({
+      userId: req.user!.userId,
+      eventType: 'notifications.log_retried',
+      target: `${row.rule_name} (${row.channel})`,
+      details: { log_id: id, success: false, error: msg },
+      ipAddress: req.ip,
+    });
     res.status(500).json({ error: msg });
   }
 });
