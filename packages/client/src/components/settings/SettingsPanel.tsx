@@ -4,6 +4,7 @@ import { ToastHost } from '../../hooks/useToast';
 import { ProfileSettings } from './ProfileSettings';
 import { GeneralSettings } from './GeneralSettings';
 import { SshPrefsSettings } from './SshPrefsSettings';
+import { CredentialsSettings } from './CredentialsSettings';
 import { SecuritySettings } from './SecuritySettings';
 import { UsersSettings } from './UsersSettings';
 import { AuditTrail } from './AuditTrail';
@@ -21,7 +22,7 @@ interface SettingsPanelProps {
   initialSection?: string;
 }
 
-type Section = 'profile' | 'general' | 'ssh-prefs' | 'security' | 'users' | 'audit' | 'global' | 'sessions' | 'authentication' | 'backup' | 'roles' | 'notifications';
+type Section = 'profile' | 'general' | 'ssh-prefs' | 'credentials' | 'security' | 'users' | 'audit' | 'global' | 'sessions' | 'authentication' | 'backup' | 'roles' | 'notifications';
 
 interface NavItem {
   id: Section;
@@ -154,10 +155,20 @@ function RolesIcon() {
   );
 }
 
+function CredentialIcon() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+      <circle cx="7.5" cy="15.5" r="5.5" />
+      <path d="M21 2l-9.6 9.6M15.5 7.5l3 3L22 7l-3-3" />
+    </svg>
+  );
+}
+
 const MY_SETTINGS_NAV: NavItem[] = [
   { id: 'profile', label: 'Profile', icon: <UserIcon /> },
   { id: 'general', label: 'General', icon: <SlidersIcon /> },
   { id: 'ssh-prefs', label: 'SSH Terminal', icon: <TerminalIcon /> },
+  { id: 'credentials', label: 'Credentials', icon: <CredentialIcon /> },
 ];
 
 const ADMIN_NAV: NavItem[] = [
@@ -180,6 +191,7 @@ const NAV_LABEL_MAP: Record<Section, string> = {
   'profile': 'Profile',
   'general': 'General',
   'ssh-prefs': 'SSH Terminal',
+  'credentials': 'Credentials',
   'security': 'Security',
   'users': 'Users',
   'audit': 'Audit Trail',
@@ -321,6 +333,7 @@ export function SettingsPanel({ isOpen, onClose, initialSection }: SettingsPanel
             {activeSection === 'profile' && <ProfileSettings />}
             {activeSection === 'general' && <GeneralSettings />}
             {activeSection === 'ssh-prefs' && <SshPrefsSettings />}
+            {activeSection === 'credentials' && <CredentialsSettings />}
             {activeSection === 'security' && hasPerm('settings.security') && <SecuritySettings />}
             {activeSection === 'authentication' && hasPerm('settings.auth_providers') && <AuthProvidersSettings />}
             {activeSection === 'users' && hasPerm('users.manage') && <UsersSettings />}

@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent as R
 import { clsx } from 'clsx';
 import { useSettings } from '../hooks/useSettings';
 import { useAuth } from '../hooks/useAuth';
-import { useIsMobile } from '../hooks/useIsMobile';
+import { useIsCoarsePointer } from '../hooks/useIsCoarsePointer';
 import { ConnectionModal, type ConnectionPrefill } from './ConnectionModal';
 import { type Protocol } from '../types/protocol.js';
 import { pointerScaleToPercent } from '../lib/vncPointerMap';
@@ -221,7 +221,7 @@ export function Sidebar({ onConnect, onConnectMultiple, width }: SidebarProps) {
   const { settings } = useSettings();
   const { features } = useAuth();
   const moonlightAvailable = features.moonlight;
-  const isMobile = useIsMobile();
+  const isMobile = useIsCoarsePointer();
   const healthMonitorEnabled = settings['health_monitor.enabled'] !== 'false';
   const [groups, setGroups] = useState<ConnectionGroup[]>([]);
   const [ungrouped, setUngrouped] = useState<Connection[]>([]);
@@ -258,7 +258,7 @@ export function Sidebar({ onConnect, onConnectMultiple, width }: SidebarProps) {
   const [newConnProtocol, setNewConnProtocol] = useState<Protocol>('rdp');
   const [deleteFolderConfirm, setDeleteFolderConfirm] = useState<DeleteFolderConfirm | null>(null);
   const [showExportConfirm, setShowExportConfirm] = useState(false);
-  const [importResult, setImportResult] = useState<{ connectionsCreated: number; groupsCreated: number } | { error: string } | null>(null);
+  const [importResult, setImportResult] = useState<{ connectionsCreated: number; groupsCreated: number; credentialsLinked: number } | { error: string } | null>(null);
   const [showSearch, setShowSearch] = useState(false);
   const inlineNewGroupInputRef = useRef<HTMLInputElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
@@ -513,6 +513,7 @@ export function Sidebar({ onConnect, onConnectMultiple, width }: SidebarProps) {
         host: conn.host,
         port: conn.port,
         username: d.username ?? '',
+        credentialId: d.credentialId ?? undefined,
         groupId: conn.groupId,
         shared: d.shared === 1,
         smbShare: d.extraConfig?.share ?? '',
@@ -621,13 +622,13 @@ export function Sidebar({ onConnect, onConnectMultiple, width }: SidebarProps) {
         credentials: 'include',
         body: JSON.stringify(json),
       });
-      const data = await res.json() as { groupsCreated?: number; connectionsCreated?: number; newGroupIds?: string[]; error?: string };
+      const data = await res.json() as { groupsCreated?: number; connectionsCreated?: number; credentialsLinked?: number; newGroupIds?: string[]; error?: string };
       if (res.ok) {
         await fetchConnections();
         if (data.newGroupIds?.length) {
           setExpandedGroups(prev => persistExpandedGroups(new Set([...prev, ...data.newGroupIds!])));
         }
-        setImportResult({ connectionsCreated: data.connectionsCreated ?? 0, groupsCreated: data.groupsCreated ?? 0 });
+        setImportResult({ connectionsCreated: data.connectionsCreated ?? 0, groupsCreated: data.groupsCreated ?? 0, credentialsLinked: data.credentialsLinked ?? 0 });
       } else {
         setImportResult({ error: data.error || 'Import failed. You may not have permission to import connections.' });
       }
@@ -1428,6 +1429,7 @@ export function Sidebar({ onConnect, onConnectMultiple, width }: SidebarProps) {
                     <p className="text-xs text-text-secondary leading-relaxed">
                       Imported <span className="font-medium text-text-primary">{importResult.connectionsCreated} connection{importResult.connectionsCreated !== 1 ? 's' : ''}</span>
                       {importResult.groupsCreated > 0 && <> in <span className="font-medium text-text-primary">{importResult.groupsCreated} folder{importResult.groupsCreated !== 1 ? 's' : ''}</span></>}.
+                      {importResult.credentialsLinked > 0 && <> {importResult.credentialsLinked} relinked to a saved credential.</>}
                     </p>
                   </>
                 )}

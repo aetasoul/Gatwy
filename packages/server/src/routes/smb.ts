@@ -2,6 +2,7 @@ import { Router, type Request, type Response } from 'express';
 import { queryOne } from '../db/helpers.js';
 import { authRequired, requirePermission } from '../middleware/auth.js';
 import { decrypt } from '../services/encryption.js';
+import { applyCredential, getCredentialDomain } from '../services/credentials.js';
 import { logAudit } from '../services/audit.js';
 import { logFileSessionEvent } from '../services/fileSession.js';
 import { resolveClientIp } from '../services/ip.js';
@@ -27,16 +28,17 @@ interface ConnRow {
   extra_config_json: string | null;
   user_id: string;
   shared: number;
+  credential_id: string | null;
 }
 
 async function getConn(connectionId: string, userId: string, role: string): Promise<ConnRow | null> {
   const conn = queryOne<ConnRow>(
-    `SELECT id, host, port, username, encrypted_password, extra_config_json, user_id, shared
+    `SELECT id, host, port, username, encrypted_password, extra_config_json, user_id, shared, credential_id
      FROM connections
      WHERE id = ? AND (user_id = ? OR shared = 1 OR id IN (SELECT cs.connection_id FROM connection_shares cs WHERE (cs.share_type = 'user' AND cs.target_id = ?) OR (cs.share_type = 'role' AND cs.target_id = ?))) AND protocol = 'smb'`,
     [connectionId, userId, userId, role],
   );
-  return conn ?? null;
+  return conn ? applyCredential(conn, userId) : null;
 }
 
 function makeSmbClient(conn: ConnRow): SMB2 {
@@ -55,6 +57,9 @@ function makeSmbClient(conn: ConnRow): SMB2 {
       domain = cfg.domain?.trim() ?? '';
     }
   } catch { /* ignore */ }
+
+  // A linked credential's own domain takes precedence over the connection's.
+  domain = getCredentialDomain(conn.credential_id) || domain;
 
   if (!shareName) {
     throw new Error('SMB share name is not configured. Edit the connection and enter a share name.');

@@ -581,6 +581,22 @@ export function RdpSession({ tab, onStatusChange, onClose }: RdpSessionProps) {
 
         let lastMoveEventTime = 0;
 
+        // The remote session keeps its own Num/Caps/Scroll Lock state, which starts
+        // off — so a numpad key arrives as Home/End/arrows however the local keyboard
+        // is set. RDP's lock-key sync sets the remote state; push ours whenever it
+        // differs, and again after focus returns in case it changed elsewhere.
+        let lastLocks = '';
+        const syncLockKeys = (e: KeyboardEvent | MouseEvent) => {
+          if (typeof e.getModifierState !== 'function') return;
+          const num = e.getModifierState('NumLock');
+          const caps = e.getModifierState('CapsLock');
+          const scroll = e.getModifierState('ScrollLock');
+          const state = `${num}|${caps}|${scroll}`;
+          if (state === lastLocks) return;
+          lastLocks = state;
+          try { session.synchronizeLockKeys(scroll, num, caps, false); } catch { /* unsupported */ }
+        };
+
         const applyEvents = (...events: unknown[]) => {
           const tx = new InputTransaction();
           events.forEach((e) => tx.addEvent(e));
@@ -600,6 +616,7 @@ export function RdpSession({ tab, onStatusChange, onClose }: RdpSessionProps) {
         };
 
         const onMouseDown = (e: MouseEvent) => {
+          syncLockKeys(e);
           canvas.focus();
           e.preventDefault();
           applyEvents(DeviceEvent.mouseButtonPressed(e.button));
@@ -643,6 +660,10 @@ export function RdpSession({ tab, onStatusChange, onClose }: RdpSessionProps) {
             (e.code === 'KeyC' || e.code === 'KeyV') && e.ctrlKey && !e.altKey && !e.metaKey;
           if (!isBrowserClipboard) e.preventDefault();
 
+          // NumLock/CapsLock keydown still reports the pre-toggle state; the
+          // matching keyup reports the new one and corrects it.
+          syncLockKeys(e);
+
           const pressed = e.type === 'keydown';
           if (pressed) {
             pushEventRef.current?.('key');
@@ -657,7 +678,10 @@ export function RdpSession({ tab, onStatusChange, onClose }: RdpSessionProps) {
           }
         };
 
-        const onBlur = () => session.releaseAllInputs();
+        const onBlur = () => {
+          session.releaseAllInputs();
+          lastLocks = ''; // re-sync on the next event — locks may change while away
+        };
         const onContextMenu = (e: Event) => e.preventDefault();
         const isFileDrag = (e: DragEvent) =>
           !!e.dataTransfer?.types && Array.from(e.dataTransfer.types).includes('Files');
