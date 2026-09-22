@@ -106,6 +106,7 @@ const EVENT_GROUPS: { label: string; events: { value: string; label: string }[] 
       { value: 'connection.created', label: 'Connection created' },
       { value: 'connection.updated', label: 'Connection updated' },
       { value: 'connection.deleted', label: 'Connection deleted' },
+      { value: 'connection.shares_updated', label: 'Connection shares updated' },
       { value: 'connections.imported', label: 'Connections imported' },
       { value: 'group.shares_updated', label: 'Folder shares updated' },
     ],

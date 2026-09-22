@@ -26,6 +26,8 @@ interface Connection {
   port: number;
   groupId: string | null;
   isShared?: boolean;
+  /** True when this owner has shared this connection (globally or with a role/user). */
+  isSharedOut?: boolean;
   tags?: string[];
 }
 
@@ -113,7 +115,7 @@ const FolderIcon = ({ size = 13, className }: { size?: number; className?: strin
   </svg>
 );
 
-const SharedFolderBadge = () => (
+const SharedBadge = () => (
   <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" className="shrink-0 text-accent">
     <path d="M4 12v8a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-8" />
     <polyline points="16 6 12 2 8 6" />
@@ -868,6 +870,11 @@ export function Sidebar({ onConnect, onConnectMultiple, width }: SidebarProps) {
         />
         <ProtocolBadge protocol={conn.protocol} />
         <span className="truncate flex-1 text-text-primary">{conn.name}</span>
+        {conn.isSharedOut && (
+          <span title="Shared with others">
+            <SharedBadge />
+          </span>
+        )}
         {conn.tags && conn.tags.length > 0 && (
           <span className="flex gap-0.5 shrink-0">
             {conn.tags.slice(0, 2).map((t) => (
@@ -1043,7 +1050,7 @@ export function Sidebar({ onConnect, onConnectMultiple, width }: SidebarProps) {
           <FolderIcon className={!readOnly && group.isSharedOut ? 'text-accent' : undefined} />
           {!readOnly && group.isSharedOut && (
             <span title="Shared with others">
-              <SharedFolderBadge />
+              <SharedBadge />
             </span>
           )}
           {!readOnly && renamingGroupId === group.id ? (

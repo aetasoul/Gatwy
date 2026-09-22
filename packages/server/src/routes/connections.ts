@@ -147,6 +147,18 @@ router.get('/', (req: Request, res: Response) => {
     [userId],
   ));
 
+  // Which of the caller's own connections are shared out (globally, or to a specific
+  // role/user) — lets the client mark them for the owner, mirroring folder isSharedOut.
+  const ownSharedConnectionIdSet = new Set<string>();
+  connections.forEach((c) => { if (c.shared === 1) ownSharedConnectionIdSet.add(c.id); });
+  if (connections.length > 0) {
+    const ownConnPlaceholders = connections.map(() => '?').join(',');
+    queryAll<{ connection_id: string }>(
+      `SELECT DISTINCT connection_id FROM connection_shares WHERE connection_id IN (${ownConnPlaceholders})`,
+      connections.map((c) => c.id),
+    ).forEach((r) => ownSharedConnectionIdSet.add(r.connection_id));
+  }
+
   // Folders (owned by someone else) reachable via a folder share — resolved live, so a
   // new sub-folder or connection dropped in later shows up without any extra share row.
   const sharedGroupIdList = accessibleSharedGroupIds(userId, userRole);
@@ -192,7 +204,7 @@ router.get('/', (req: Request, res: Response) => {
     name: string;
     parentId: string | null;
     children: GroupNode[];
-    connections: { id: string; name: string; protocol: string; host: string; port: number; groupId: string | null; isShared: boolean; tags: string[] }[];
+    connections: { id: string; name: string; protocol: string; host: string; port: number; groupId: string | null; isShared: boolean; isSharedOut: boolean; tags: string[] }[];
     isSharedOut: boolean;
   }
 
@@ -212,15 +224,15 @@ router.get('/', (req: Request, res: Response) => {
     return { map, roots };
   }
 
-  function mapConn(c: ConnectionRow, isShared: boolean) {
+  function mapConn(c: ConnectionRow, isShared: boolean, isSharedOut = false) {
     return {
-      id: c.id, name: c.name, protocol: c.protocol, host: c.host, port: c.port, groupId: c.group_id, isShared,
+      id: c.id, name: c.name, protocol: c.protocol, host: c.host, port: c.port, groupId: c.group_id, isShared, isSharedOut,
       tags: c.tags ? JSON.parse(c.tags) as string[] : [],
     };
   }
 
   const { map: groupMap, roots: rootGroups } = buildTree(groups);
-  const connMapped = connections.map((c) => mapConn(c, false));
+  const connMapped = connections.map((c) => mapConn(c, false, ownSharedConnectionIdSet.has(c.id)));
   for (const conn of connMapped) {
     if (conn.groupId && groupMap.has(conn.groupId)) {
       groupMap.get(conn.groupId)!.connections.push(conn);
@@ -583,6 +595,7 @@ router.put('/:id', (req: Request, res: Response) => {
     port: existing.port,
     username: existing.username,
     folder: groupNameForAudit(existing.group_id),
+    shared: existing.shared === 1,
   };
 
   const { name, protocol, host, port, username, password, groupId, privateKey, shared, tunnels, extraConfig, tags, skipCertValidation, credentialId } = req.body;
@@ -682,6 +695,7 @@ router.put('/:id', (req: Request, res: Response) => {
     port: port !== undefined ? port : before.port,
     username: username !== undefined ? (username || null) : before.username,
     folder: groupId !== undefined ? groupNameForAudit(groupId || null) : before.folder,
+    shared: shared !== undefined ? !!shared : before.shared,
   };
 
   logAudit({
@@ -1048,7 +1062,7 @@ router.get('/:id/shares', (req: Request, res: Response) => {
 router.put('/:id/shares', (req: Request, res: Response) => {
   const userId = req.user!.userId;
   const id = req.params.id as string;
-  const conn = queryOne<{ user_id: string }>('SELECT user_id FROM connections WHERE id = ?', [id]);
+  const conn = queryOne<{ user_id: string; name: string }>('SELECT user_id, name FROM connections WHERE id = ?', [id]);
   if (!conn) { res.status(404).json({ error: 'Connection not found' }); return; }
   if (conn.user_id !== userId && !userCan(req, 'connections.edit_any')) {
     res.status(403).json({ error: 'Not authorized' }); return;
@@ -1068,8 +1082,14 @@ router.put('/:id/shares', (req: Request, res: Response) => {
     if (err) { res.status(400).json({ error: err }); return; }
   }
 
+  const before = queryAll<{ share_type: string; target_id: string }>(
+    'SELECT share_type, target_id FROM connection_shares WHERE connection_id = ? ORDER BY share_type, target_id',
+    [id],
+  ).map((s) => ({ shareType: s.share_type, targetId: s.target_id }));
+
   // Replace all
   execute('DELETE FROM connection_shares WHERE connection_id = ?', [id]);
+  const after: { shareType: string; targetId: string }[] = [];
   for (const s of shares) {
     if (s.shareType !== 'role' && s.shareType !== 'user') continue;
     if (!s.targetId) continue;
@@ -1078,7 +1098,17 @@ router.put('/:id/shares', (req: Request, res: Response) => {
       'INSERT INTO connection_shares (id, connection_id, share_type, target_id) VALUES (?, ?, ?, ?)',
       [sid, id, s.shareType, s.targetId],
     );
+    after.push({ shareType: s.shareType, targetId: s.targetId });
   }
+
+  logAudit({
+    userId,
+    eventType: 'connection.shares_updated',
+    target: conn.name,
+    details: { before: resolveShareTargetNames(before), after: resolveShareTargetNames(after) },
+    ipAddress: req.ip,
+  });
+
   res.json({ success: true });
 });
 
