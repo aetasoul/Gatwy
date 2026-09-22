@@ -178,6 +178,16 @@ export function persistDb(): void {
   saveDb();
 }
 
+/**
+ * Stop the periodic save timer and close the database. Without this a process
+ * that opened the DB (e.g. a test run) never exits.
+ */
+export function closeDb(): void {
+  if (saveTimer) clearInterval(saveTimer);
+  try { db?.close(); } catch { /* already closed */ }
+  db = undefined as unknown as Database;
+}
+
 export function restoreDbFromBytes(bytes: Buffer): void {
   const next = new SqlModule.Database(bytes) as Database;
   applyDbPragmas(next);
@@ -189,9 +199,12 @@ export function restoreDbFromBytes(bytes: Buffer): void {
   const prev = db;
   db = next;
   try {
+    // A backup from an older version has an older schema — bring it up to date
+    // now rather than leaving routes to hit missing tables until the next restart.
+    runMigrations();
     saveDb();
   } catch (err) {
-    // Keep the previous in-memory DB if the atomic persist failed.
+    // Keep the previous in-memory DB if migrating or the atomic persist failed.
     db = prev;
     try { next.close(); } catch { /* ignore */ }
     throw err;
@@ -918,6 +931,52 @@ function runMigrations() {
       version: 19,
       run: (database: Database) => {
         try { database.run('ALTER TABLE users ADD COLUMN general_prefs_json TEXT'); } catch { /* already exists */ }
+      },
+    },
+    {
+      version: 20,
+      run: (database: Database) => {
+        // Credential library: reusable username/password or username/key sets
+        // that connections can reference instead of storing inline credentials.
+        database.run(`CREATE TABLE IF NOT EXISTS credentials (
+          id TEXT PRIMARY KEY,
+          user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+          name TEXT NOT NULL,
+          type TEXT NOT NULL CHECK(type IN ('password','key')),
+          username TEXT,
+          encrypted_password TEXT,
+          private_key TEXT,
+          encrypted_passphrase TEXT,
+          shared INTEGER NOT NULL DEFAULT 0,
+          created_at TEXT NOT NULL DEFAULT (datetime('now')),
+          updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+        )`);
+        database.run('CREATE INDEX IF NOT EXISTS idx_credentials_user ON credentials(user_id)');
+        try { database.run('ALTER TABLE connections ADD COLUMN credential_id TEXT REFERENCES credentials(id) ON DELETE SET NULL'); } catch { /* already exists */ }
+
+        // Grant the new credential permissions to the builtin admin role.
+        const row = database.exec(`SELECT permissions_json FROM roles WHERE id = 'admin'`);
+        if (!row.length || !row[0].values.length) return;
+        let perms: string[] = [];
+        try { perms = JSON.parse(row[0].values[0][0] as string) as string[]; } catch { return; }
+        let changed = false;
+        for (const p of ['credentials.share', 'credentials.use_shared']) {
+          if (!perms.includes(p)) { perms.push(p); changed = true; }
+        }
+        if (changed) {
+          database.run(
+            `UPDATE roles SET permissions_json = ?, updated_at = datetime('now') WHERE id = 'admin'`,
+            [JSON.stringify(perms)],
+          );
+        }
+      },
+    },
+    {
+      version: 21,
+      run: (database: Database) => {
+        // Optional NTLM domain on password credentials — SMB (and any future
+        // domain-aware protocol) can use it instead of retyping it per connection.
+        try { database.run('ALTER TABLE credentials ADD COLUMN domain TEXT'); } catch { /* already exists */ }
       },
     },
   ];

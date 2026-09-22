@@ -9,6 +9,7 @@ import { acquireConnection, releaseConnection } from './connectionLimits.js';
 import { queryOne, execute } from '../db/helpers.js';
 import { redeemWsTicket } from '../services/wsTicket.js';
 import { userHasPermission, wsCanAccess } from '../services/permissions.js';
+import { applyCredential } from '../services/credentials.js';
 import { decrypt, encryptRecordingStream } from '../services/encryption.js';
 import { logAudit } from '../services/audit.js';
 import { resolveClientIp } from '../services/ip.js';
@@ -19,6 +20,7 @@ import { isSessionRevoked } from '../services/loginSession.js';
 
 interface ConnectionRow {
   id: string; host: string; port: number; protocol: string;
+  user_id: string; credential_id: string | null;
   username: string | null; encrypted_password: string | null;
   private_key: string | null; name: string;
   recording_enabled: number;
@@ -291,10 +293,11 @@ export function setupTelnetProxy(server: https.Server): void {
     if (!limit.allowed) { ws.close(4008, limit.reason ?? 'Connection limit'); return; }
 
     const access = wsCanAccess(userId);
-    const conn = queryOne<ConnectionRow>(
+    const connRow = queryOne<ConnectionRow>(
       `SELECT * FROM connections WHERE id = ? AND ${access.where}`,
       [connectionId, ...access.params],
     );
+    const conn = connRow ? applyCredential(connRow, userId) : undefined;
     if (!conn || conn.protocol !== 'telnet') { ws.close(4002, 'Not found or not Telnet'); return; }
 
     const sessionDbId = uuid();

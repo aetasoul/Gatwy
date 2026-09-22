@@ -3,6 +3,7 @@ import path from 'path';
 import { queryAll, queryOne, execute } from '../db/helpers.js';
 import { getSetting, setSetting } from './settings.js';
 import { decrypt, encrypt } from './encryption.js';
+import { applyCredential } from './credentials.js';
 import { createBackup, getRecordingsSizeInfo } from './backup.js';
 import { getDb } from '../db/index.js';
 import { logAudit } from './audit.js';
@@ -86,6 +87,8 @@ type SavedSmbConnection = {
   username: string | null;
   encrypted_password: string | null;
   extra_config_json: string | null;
+  user_id: string;
+  credential_id: string | null;
 };
 
 function setting(key: string): string {
@@ -463,13 +466,15 @@ function getSavedSmbConnections(): Array<{ id: string; name: string; host: strin
 }
 
 function resolveSavedConnection(connectionId: string): SavedSmbConnection | null {
-  return queryOne<SavedSmbConnection>(
-    `SELECT c.id, c.name, c.host, c.port, c.username, c.encrypted_password, c.extra_config_json
+  const row = queryOne<SavedSmbConnection>(
+    `SELECT c.id, c.name, c.host, c.port, c.username, c.encrypted_password, c.extra_config_json,
+            c.user_id, c.credential_id
      FROM connections c
      INNER JOIN users u ON u.id = c.user_id
      WHERE c.id = ? AND c.protocol = 'smb' AND u.role = 'admin'`,
     [connectionId],
-  ) ?? null;
+  );
+  return row ? applyCredential(row, null) : null;
 }
 
 function resolveTarget(config: AutoBackupConfig, sensitive: AutoBackupSensitive): { target: SmbTarget; label: string } {

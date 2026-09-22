@@ -39,6 +39,8 @@ declare module '@devolutions/iron-remote-desktop-rdp' {
   export interface Session {
     run(): Promise<SessionTerminationInfo>;
     shutdown(): void;
+    /** Set the remote session's Num/Caps/Scroll/Kana Lock state. */
+    synchronizeLockKeys(scrollLock: boolean, numLock: boolean, capsLock: boolean, kanaLock: boolean): void;
     free(): void;
   }
 

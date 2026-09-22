@@ -12,6 +12,8 @@ import { acquireConnection, releaseConnection } from './connectionLimits.js';
 import { queryOne, execute } from '../db/helpers.js';
 import { redeemWsTicket } from '../services/wsTicket.js';
 import { userHasPermission, wsCanAccess } from '../services/permissions.js';
+import { applyCredential } from '../services/credentials.js';
+import { friendlyKeyError, prepareKey } from '../services/sshKeys.js';
 import { decrypt, encryptRecordingStream } from '../services/encryption.js';
 import { logAudit } from '../services/audit.js';
 import { resolveClientIp } from '../services/ip.js';
@@ -32,6 +34,8 @@ import { isDangerousTunnelHost } from '../services/ssrfGuard.js';
 
 interface ConnectionRow {
   id: string; host: string; port: number; protocol: string;
+  user_id: string; credential_id: string | null;
+  encrypted_passphrase?: string | null;
   username: string | null; encrypted_password: string | null;
   private_key: string | null; name: string;
   recording_enabled: number;
@@ -158,10 +162,11 @@ export function setupSshProxy(server: https.Server): void {
     if (!limit.allowed) { ws.close(4008, limit.reason ?? 'Connection limit'); return; }
 
     const access = wsCanAccess(userId);
-    const conn = queryOne<ConnectionRow>(
+    const connRow = queryOne<ConnectionRow>(
       `SELECT * FROM connections WHERE id = ? AND ${access.where}`,
       [connectionId, ...access.params],
     );
+    const conn = connRow ? applyCredential(connRow, userId) : undefined;
     if (!conn || conn.protocol !== 'ssh') { ws.close(4002, 'Not found or not SSH'); return; }
 
     const sessionDbId = uuid();
@@ -313,7 +318,11 @@ export function setupSshProxy(server: https.Server): void {
       console.error('[ssh] error:', err.message);
       if (ws.readyState === WebSocket.OPEN) {
         ws.send(JSON.stringify({ type: 'error', message: err.message }));
-        ws.close(4003, err.message);
+        // Close reasons are capped at 123 bytes and ws throws beyond that; the
+        // full message has already been sent above.
+        let reason = err.message;
+        while (Buffer.byteLength(reason) > 123) reason = reason.slice(0, -1);
+        ws.close(4003, reason);
       }
     });
 
@@ -324,9 +333,18 @@ export function setupSshProxy(server: https.Server): void {
     const password = conn.encrypted_password
       ? (() => { try { return decrypt(conn.encrypted_password!); } catch { return undefined; } })()
       : undefined;
-    const privateKey = conn.private_key
+    const storedKey = conn.private_key
       ? (() => { try { return decrypt(conn.private_key!); } catch { return undefined; } })()
       : undefined;
+    const storedPassphrase = conn.encrypted_passphrase
+      ? (() => { try { return decrypt(conn.encrypted_passphrase!); } catch { return undefined; } })()
+      : undefined;
+    // Convert PKCS#8 keys saved before conversion existed, and surface key
+    // problems as a clear session error.
+    const preparedKey = storedKey ? prepareKey(storedKey, storedPassphrase) : undefined;
+    const keyError = preparedKey && 'error' in preparedKey ? preparedKey.error : undefined;
+    const privateKey = preparedKey && 'key' in preparedKey ? preparedKey.key.privateKey : undefined;
+    const passphrase = preparedKey && 'key' in preparedKey ? preparedKey.key.passphrase : undefined;
 
     const hostVerifier = (key: Buffer): boolean => {
       const fingerprint = crypto.createHash('sha256').update(key).digest('hex');
@@ -335,6 +353,19 @@ export function setupSshProxy(server: https.Server): void {
       }
       execute('UPDATE connections SET host_fingerprint = ? WHERE id = ?', [fingerprint, conn.id]);
       return true;
+    };
+
+    // ssh2 throws synchronously from connect() for config problems such as an
+    // encrypted key without a passphrase — route those through the normal error
+    // path instead of letting them crash the process.
+    const startSsh = (cfg: Parameters<SshClient['connect']>[0]) => {
+      try {
+        ssh.connect(cfg);
+      } catch (err) {
+        const msg = (err as Error).message;
+        const keyErr = msg.match(/^Cannot parse privateKey: (.*)$/);
+        ssh.emit('error', new Error(keyErr ? friendlyKeyError(keyErr[1]) : msg));
+      }
     };
 
     if (promptOnConnect) {
@@ -367,7 +398,7 @@ export function setupSshProxy(server: https.Server): void {
               rows = json.rows;
             }
           } catch { /* use defaults */ }
-          ssh.connect({
+          startSsh({
             host: conn.host, port: conn.port,
             username: conn.username || '',
             password: oneTimePassword,
@@ -388,10 +419,11 @@ export function setupSshProxy(server: https.Server): void {
           }
         } catch { /* not a resize — ignore */ }
       });
-      ssh.connect({
+      if (keyError) { ssh.emit('error', new Error(keyError)); return; }
+      startSsh({
         host: conn.host, port: conn.port,
         username: conn.username || '',
-        ...(privateKey ? { privateKey } : { password }),
+        ...(privateKey ? { privateKey, passphrase } : { password }),
         readyTimeout: 15000,
         // Idle interactive shells generate no traffic — without SSH-level keepalives, NAT/firewalls
         // between the server and the remote host silently drop the TCP connection (issue #45).

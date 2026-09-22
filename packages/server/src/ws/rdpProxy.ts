@@ -8,6 +8,7 @@ import { registerWs, unregisterWs } from './wsRegistry.js';
 import { acquireConnection, releaseConnection } from './connectionLimits.js';
 import { redeemWsTicket } from '../services/wsTicket.js';
 import { userHasPermission, wsCanAccess } from '../services/permissions.js';
+import { applyCredential } from '../services/credentials.js';
 import { queryOne, execute } from '../db/helpers.js';
 import { decrypt } from '../services/encryption.js';
 import { logAudit } from '../services/audit.js';
@@ -19,6 +20,7 @@ import { inspectServerPreActivationFrame, type RedirectInfo } from './rdpRedirec
 
 interface ConnectionRow {
   id: string;
+  user_id: string; credential_id: string | null;
   host: string;
   port: number;
   protocol: string;
@@ -292,10 +294,11 @@ export function setupRdpProxy(server: https.Server): void {
     if (!limit.allowed) { ws.close(4008, limit.reason ?? 'Connection limit'); return; }
 
     const access = wsCanAccess(userId);
-    const conn = queryOne<ConnectionRow>(
+    const connRow = queryOne<ConnectionRow>(
       `SELECT * FROM connections WHERE id = ? AND ${access.where}`,
       [connectionId, ...access.params],
     );
+    const conn = connRow ? applyCredential(connRow, userId) : undefined;
     if (!conn || conn.protocol !== 'rdp') { ws.close(4002, 'Connection not found or not RDP'); return; }
 
     const sessionId = uuid();

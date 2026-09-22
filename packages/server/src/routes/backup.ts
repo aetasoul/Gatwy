@@ -87,6 +87,14 @@ async function reEncryptDbBytes(dbBytes: Buffer, backupKeyHex: string, liveKeyHe
   reEncryptColumn('connections', 'encrypted_password');
   reEncryptColumn('connections', 'private_key');
 
+  // credentials table (absent in backups taken before the credential library)
+  const hasCredentials = tmpDb.exec(`SELECT name FROM sqlite_master WHERE type='table' AND name='credentials'`).length > 0;
+  if (hasCredentials) {
+    reEncryptColumn('credentials', 'encrypted_password');
+    reEncryptColumn('credentials', 'private_key');
+    reEncryptColumn('credentials', 'encrypted_passphrase');
+  }
+
   // users table — MFA secrets
   reEncryptColumn('users', 'mfa_secret');
 
