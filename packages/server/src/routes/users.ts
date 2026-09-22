@@ -5,6 +5,7 @@ import { queryAll, queryOne, execute } from '../db/helpers.js';
 import { authRequired, userCan } from '../middleware/auth.js';
 import { logAudit } from '../services/audit.js';
 import { getUserPasskeys, adminResetPasskeys } from '../services/passkey.js';
+import { sharedCredentialsInUseByOthers } from '../services/credentials.js';
 
 const router = Router();
 router.use(authRequired);
@@ -197,6 +198,18 @@ router.delete('/:id', (req: Request, res: Response) => {
   const user = queryOne<UserRow>('SELECT id, username, display_name, email, role FROM users WHERE id = ?', [id]);
   if (!user) {
     res.status(404).json({ error: 'User not found' });
+    return;
+  }
+
+  // Deleting the user cascades their shared credentials away; block it while
+  // another user's connection still depends on one, rather than silently
+  // stripping that connection's auth.
+  const blockers = sharedCredentialsInUseByOthers(id);
+  if (blockers.length) {
+    res.status(409).json({
+      error: 'This user owns shared credentials still used by other users\' connections',
+      credentials: blockers.map((b) => ({ id: b.id, name: b.name, connectionCount: b.connections.length })),
+    });
     return;
   }
 
