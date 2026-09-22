@@ -5,16 +5,6 @@ import os from 'os';
 import path from 'path';
 import type { Server } from 'http';
 
-// Regression test for Sicurezza.md finding #6: connections.share was only checked
-// on PUT /:id/shares (targeted sharing). Setting the global `shared: true` flag —
-// which makes a connection visible to every user — via POST /, PUT /:id or
-// POST /import only required connections.create/edit_own, letting any user with
-// those (much more common) permissions share connections without ever being
-// granted connections.share.
-//
-// Uses a real sql.js DB in a temp DATA_DIR and a real HTTP server: connections.ts
-// has no external network dependency (unlike database.ts's Postgres/MySQL pools),
-// so a full end-to-end test is proportionate here.
 
 const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'gatwy-connshare-test-'));
 process.env.DATA_DIR = dataDir;

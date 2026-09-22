@@ -2,18 +2,6 @@ import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import databaseRouter from '../src/routes/database.js';
 
-// Regression test for the finding in Sicurezza.md #5: `requireDbPermission` was
-// defined but never wired as middleware, so every /:connectionId/* route under
-// packages/server/src/routes/database.ts (except /connect, checked inline) skipped
-// the protocols.postgres / protocols.mysql role check entirely — any authenticated
-// user with read access to a DB connection (owner, shared, or role-shared) could
-// run arbitrary SQL through it regardless of role permissions.
-//
-// This test only inspects the router's middleware stack (no real DB needed): it
-// asserts requireDbPermission actually runs, and runs before every route handler
-// for a :connectionId sub-path. It exists to catch a regression where the `.use()`
-// wiring line is removed or reordered, not to re-verify the permission logic itself.
-
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type Layer = { name: string; route?: { path: string }; match: (path: string) => boolean };
 

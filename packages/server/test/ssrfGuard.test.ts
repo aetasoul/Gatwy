@@ -2,9 +2,6 @@ import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import { isDangerousTunnelHost } from '../src/services/ssrfGuard.js';
 
-// Shared by SSH tunnel targets (sshProxy.ts) and RDP Server Redirection targets
-// (rdpProxy.ts, Sicurezza.md finding #4). RFC-1918 private ranges must stay allowed —
-// they're a legitimate target relative to the remote server's network, not Gatwy's own.
 describe('isDangerousTunnelHost', () => {
   it('blocks loopback, link-local, metadata, and unspecified addresses', () => {
     assert.equal(isDangerousTunnelHost('127.0.0.1'), true);

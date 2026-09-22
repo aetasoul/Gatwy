@@ -33,7 +33,7 @@ export function App() {
     );
   }
 
-  // When logged in, redirect /login → / so the URL doesn't stay as "/login" after auth
+  // When logged in, redirect "/login" → Root / so the URL doesn't stay as "/login" after auth
   return (
     <>
       <ProxyDetectionToast />

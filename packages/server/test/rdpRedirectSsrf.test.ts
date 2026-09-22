@@ -1,10 +1,3 @@
-// End-to-end (parser + guard) regression test for Sicurezza.md finding #4: an RDP server
-// can send a Server Redirection PDU naming an arbitrary host/port, which rdpProxy.ts used to
-// dial without any restriction (SSRF + credential relay to a target the connection owner
-// never chose). This builds a real wire-format redirection PDU byte-by-byte — the same bytes
-// inspectServerPreActivationFrame() parses in production — targeting a loopback address, and
-// checks the parsed host is one isDangerousTunnelHost() (the guard now wired into
-// rdpProxy.ts before it dials out) actually rejects.
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import {

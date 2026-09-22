@@ -2,10 +2,6 @@ import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import { ftpsSecureOptions } from '../src/routes/ftp.js';
 
-// Regression test for Sicurezza.md finding #7: FTPS connections unconditionally
-// passed { rejectUnauthorized: false } to the TLS layer whenever FTPS was enabled,
-// with no way to opt back into certificate validation — unlike RDP, which already
-// gates rejectUnauthorized behind a per-connection skip_cert_validation flag.
 
 describe('ftpsSecureOptions', () => {
   it('returns undefined when FTPS is not enabled (plain FTP)', () => {
