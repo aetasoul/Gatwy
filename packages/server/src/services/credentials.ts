@@ -25,6 +25,8 @@ interface CredentialSource {
   private_key?: string | null;
   /** Set only when resolved from a key-type library credential. */
   encrypted_passphrase?: string | null;
+  /** Domain carried by a linked library credential, if any. */
+  credential_domain?: string | null;
 }
 
 /**
@@ -120,16 +122,6 @@ export function sharedCredentialsInUseByOthers(ownerId: string): SharedCredentia
 }
 
 /**
- * Domain (e.g. NTLM domain for SMB) stored on a linked library credential, if
- * any — lets a credential carry a domain instead of retyping it per connection.
- */
-export function getCredentialDomain(credentialId: string | null | undefined): string | null {
-  if (!credentialId) return null;
-  const cred = queryOne<{ domain: string | null }>('SELECT domain FROM credentials WHERE id = ?', [credentialId]);
-  return cred?.domain ?? null;
-}
-
-/**
  * Return a copy of `conn` whose username / encrypted_password / private_key come
  * from its linked library credential (values stay encrypted — callers decrypt
  * exactly as they do for inline credentials). Connections without a credential
@@ -146,7 +138,11 @@ export function applyCredential<T extends CredentialSource>(conn: T, requesterId
     || (cred.user_id === conn.user_id && (requesterId === null || requesterId === cred.user_id))
   );
   if (!cred || !usable) {
-    return { ...conn, username: null, encrypted_password: null, private_key: null, encrypted_passphrase: null };
+    return {
+      ...conn,
+      username: null, encrypted_password: null, private_key: null,
+      encrypted_passphrase: null, credential_domain: null,
+    };
   }
   const isKey = cred.type === 'key';
   return {
@@ -155,5 +151,6 @@ export function applyCredential<T extends CredentialSource>(conn: T, requesterId
     encrypted_password: isKey ? null : cred.encrypted_password,
     private_key: isKey ? cred.private_key : null,
     encrypted_passphrase: isKey ? cred.encrypted_passphrase : null,
+    credential_domain: isKey ? null : cred.domain,
   };
 }
