@@ -178,6 +178,16 @@ export function persistDb(): void {
   saveDb();
 }
 
+/**
+ * Stop the periodic save timer and close the database. Without this a process
+ * that opened the DB (e.g. a test run) never exits.
+ */
+export function closeDb(): void {
+  if (saveTimer) clearInterval(saveTimer);
+  try { db?.close(); } catch { /* already closed */ }
+  db = undefined as unknown as Database;
+}
+
 export function restoreDbFromBytes(bytes: Buffer): void {
   const next = new SqlModule.Database(bytes) as Database;
   applyDbPragmas(next);

@@ -100,6 +100,15 @@ const EVENT_GROUPS: { label: string; events: { value: string; label: string }[] 
     ],
   },
   {
+    label: 'Credentials',
+    events: [
+      { value: 'credential.*', label: 'Credentials — all' },
+      { value: 'credential.created', label: 'Credential created' },
+      { value: 'credential.updated', label: 'Credential updated' },
+      { value: 'credential.deleted', label: 'Credential deleted' },
+    ],
+  },
+  {
     label: 'Users',
     events: [
       { value: 'user.*', label: 'Users — all' },
