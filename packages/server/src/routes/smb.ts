@@ -2,7 +2,7 @@ import { Router, type Request, type Response } from 'express';
 import { queryOne } from '../db/helpers.js';
 import { authRequired, requirePermission } from '../middleware/auth.js';
 import { decrypt } from '../services/encryption.js';
-import { applyCredential, getCredentialDomain } from '../services/credentials.js';
+import { applyCredential } from '../services/credentials.js';
 import { logAudit } from '../services/audit.js';
 import { logFileSessionEvent } from '../services/fileSession.js';
 import { resolveClientIp } from '../services/ip.js';
@@ -30,6 +30,7 @@ interface ConnRow {
   user_id: string;
   shared: number;
   credential_id: string | null;
+  credential_domain?: string | null;
 }
 
 async function getConn(connectionId: string, userId: string, role: string): Promise<ConnRow | null> {
@@ -61,7 +62,9 @@ function makeSmbClient(conn: ConnRow): SMB2 {
   } catch { /* ignore */ }
 
   // A linked credential's own domain takes precedence over the connection's.
-  domain = getCredentialDomain(conn.credential_id) || domain;
+  // It arrives via applyCredential, so a credential that isn't usable here
+  // contributes no domain, just as it contributes no username or password.
+  domain = conn.credential_domain || domain;
 
   if (!shareName) {
     throw new Error('SMB share name is not configured. Edit the connection and enter a share name.');

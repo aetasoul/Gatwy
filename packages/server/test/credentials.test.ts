@@ -12,7 +12,7 @@ process.env.GATWY_ENCRYPTION_KEY = crypto.randomBytes(32).toString('hex');
 
 const { initDb, getDb, closeDb } = await import('../src/db/index.js');
 const { execute } = await import('../src/db/helpers.js');
-const { applyCredential, checkCredentialAssignable, connectionsWithUnshareableCredential, isConnectionShared, sharedCredentialsInUseByOthers, getCredentialDomain } = await import('../src/services/credentials.js');
+const { applyCredential, checkCredentialAssignable, connectionsWithUnshareableCredential, isConnectionShared, sharedCredentialsInUseByOthers } = await import('../src/services/credentials.js');
 
 const ALICE = 'user-alice';
 const BOB = 'user-bob';
@@ -51,7 +51,7 @@ function connRow(id: string) {
   stmt.step();
   const row = stmt.getAsObject() as Record<string, unknown>;
   stmt.free();
-  return row as { user_id: string; credential_id: string | null; username: string | null; encrypted_password: string | null; private_key: string | null };
+  return row as { user_id: string; credential_id: string | null; username: string | null; encrypted_password: string | null; private_key: string | null; credential_domain?: string | null };
 }
 
 describe('credential rules', () => {
@@ -229,18 +229,37 @@ describe('credential rules', () => {
     });
   });
 
-  describe('getCredentialDomain', () => {
+  describe('credential domain', () => {
     it('is null when no credential is linked', () => {
-      assert.equal(getCredentialDomain(null), null);
+      addConnection('conn-domain-none', ALICE);
+      assert.equal(applyCredential(connRow('conn-domain-none'), ALICE).credential_domain ?? null, null);
     });
 
     it('is null when the credential has no domain set', () => {
-      assert.equal(getCredentialDomain('cred-alice-private'), null);
+      addConnection('conn-domain-unset', ALICE, { credentialId: 'cred-alice-private' });
+      assert.equal(applyCredential(connRow('conn-domain-unset'), ALICE).credential_domain, null);
     });
 
-    it('returns the stored domain', () => {
+    it('carries the stored domain', () => {
       addCredential('cred-alice-domain', ALICE, false, { domain: 'CONTOSO' });
-      assert.equal(getCredentialDomain('cred-alice-domain'), 'CONTOSO');
+      addConnection('conn-domain', ALICE, { credentialId: 'cred-alice-domain' });
+      assert.equal(applyCredential(connRow('conn-domain'), ALICE).credential_domain, 'CONTOSO');
+    });
+
+    // The domain must follow the same visibility rules as the secrets: a
+    // credential withheld from this user contributes nothing at all.
+    it('is withheld along with the credential it belongs to', () => {
+      addCredential('cred-alice-domain-private', ALICE, false, { domain: 'CONTOSO' });
+      addConnection('conn-domain-private', ALICE, { shared: true, credentialId: 'cred-alice-domain-private' });
+      const res = applyCredential(connRow('conn-domain-private'), BOB);
+      assert.equal(res.credential_domain, null);
+      assert.equal(res.username, null);
+    });
+
+    it('carries a shared credential domain to another user', () => {
+      addCredential('cred-shared-domain', ALICE, true, { domain: 'CONTOSO' });
+      addConnection('conn-shared-domain', ALICE, { shared: true, credentialId: 'cred-shared-domain' });
+      assert.equal(applyCredential(connRow('conn-shared-domain'), BOB).credential_domain, 'CONTOSO');
     });
   });
 });
