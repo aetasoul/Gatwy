@@ -3,6 +3,7 @@ import { type Protocol } from '../types/protocol.js';
 import { pointerScaleToPercent } from '../lib/vncPointerMap';
 import { credentialTypesFor, fetchCredentials, type CredentialSummary } from '../lib/credentials';
 import { CredentialPicker } from './CredentialPicker';
+import { CredentialFormModal } from './CredentialFormModal';
 import { useAuth } from '../hooks/useAuth';
 
 const TagRemoveIcon = () => (
@@ -250,6 +251,7 @@ export function ConnectionModal({ connection, groups, onClose, onSaved, prefill,
   const [credentialId, setCredentialId] = useState(prefill?.credentialId ?? '');
   const [saveToLibrary, setSaveToLibrary] = useState(false);
   const [libraryName, setLibraryName] = useState('');
+  const [createCredOpen, setCreateCredOpen] = useState(false);
   const newFolderInputRef = useRef<HTMLInputElement>(null);
 
   const isSharedConn = shared || selectedShareRoles.length > 0 || selectedShareUsers.length > 0;
@@ -586,7 +588,16 @@ export function ConnectionModal({ connection, groups, onClose, onSaved, prefill,
 
           {protocol !== 'moonlight' && (
             <div>
-              <label className="block text-xs font-medium text-text-secondary mb-1">Credentials</label>
+              <div className="flex items-center justify-between mb-1">
+                <label className="block text-xs font-medium text-text-secondary">Credentials</label>
+                <button
+                  type="button"
+                  onClick={() => setCreateCredOpen(true)}
+                  className="text-[11px] text-accent hover:underline font-medium"
+                >
+                  + New credential
+                </button>
+              </div>
               <CredentialPicker
                 pickableCreds={pickableCreds}
                 selectedCred={selectedCred}
@@ -607,6 +618,18 @@ export function ConnectionModal({ connection, groups, onClose, onSaved, prefill,
                 </p>
               ) : null}
             </div>
+          )}
+
+          {createCredOpen && (
+            <CredentialFormModal
+              editing={null}
+              canShare={canShareCredentials}
+              onClose={() => setCreateCredOpen(false)}
+              onSaved={(cred) => {
+                setLibrary((prev) => [...prev, cred]);
+                setCredentialId(cred.id);
+              }}
+            />
           )}
 
           {protocol !== 'moonlight' && !credentialId && (
