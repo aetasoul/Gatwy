@@ -35,7 +35,7 @@ One container. Zero dependencies. Open your browser and connect.
 - **Split-pane workspace** — unlimited sessions side by side with drag-and-drop tabs
 - **Session recording & audit** — encrypted RDP video, SSH asciinema, command-level audit log with auto-redacted passwords, file activity tracking
 - **Credential library** — reusable username/password and SSH key credentials shared across connections; rotate a password once and every connection follows
-- **Granular RBAC** — 29 fine-grained permissions, custom roles, per-connection sharing, protocol-level access control
+- **Granular RBAC** — 30 fine-grained permissions, custom roles, per-connection sharing, protocol-level access control
 - **Auth flexibility** — local accounts, LDAP/AD, OpenID Connect (SSO), MFA (TOTP), IP access rules
 - **Alerting** — SMTP, Telegram, Slack, Webhook channels with a no-code rule builder
 - **Encrypted backup & restore** — single-file `.geb` backup with AES-256 encryption
