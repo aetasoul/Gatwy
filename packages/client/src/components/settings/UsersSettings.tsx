@@ -313,50 +313,69 @@ export function UsersSettings() {
       <div className="flex items-center justify-between">
         <h2 className="text-base font-semibold text-text-primary">Users</h2>
         <button
-          onClick={() => setShowCreate((v) => !v)}
+          onClick={() => setShowCreate(true)}
           className="px-3 py-1.5 bg-accent text-white rounded hover:bg-accent-hover text-sm font-medium"
         >
-          {showCreate ? 'Cancel' : '+ Create User'}
+          + Create User
         </button>
       </div>
 
+      {/* Create User Modal */}
       {showCreate && (
-        <form onSubmit={handleCreateUser} className="bg-surface-alt border border-border rounded-lg p-4 space-y-3">
-          <h3 className="text-sm font-semibold text-text-primary">New User</h3>
-          <div className="grid grid-cols-2 gap-3">
-            <div>
-              <label className="block text-xs text-text-secondary mb-1">Username</label>
-              <input type="text" required value={createUsername} onChange={(e) => setCreateUsername(e.target.value)}
-                className="w-full px-3 py-2 bg-surface border border-border rounded text-text-primary focus:outline-none focus:ring-2 focus:ring-accent text-sm" />
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm"
+          onClick={(e) => { if (e.target === e.currentTarget) setShowCreate(false); }}>
+          <div className="bg-surface-alt border border-border rounded-lg shadow-xl w-full max-w-md p-6 space-y-4 max-h-[90vh] overflow-y-auto">
+            <div className="flex items-center justify-between">
+              <h3 className="text-base font-semibold text-text-primary">New User</h3>
+              <button onClick={() => setShowCreate(false)} className="p-1 rounded hover:bg-surface-hover text-text-secondary hover:text-text-primary">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                  <line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" />
+                </svg>
+              </button>
             </div>
-            <div>
-              <label className="block text-xs text-text-secondary mb-1">Display Name</label>
-              <input type="text" required value={createDisplayName} onChange={(e) => setCreateDisplayName(e.target.value)}
-                className="w-full px-3 py-2 bg-surface border border-border rounded text-text-primary focus:outline-none focus:ring-2 focus:ring-accent text-sm" />
-            </div>
-            <div>
-              <label className="block text-xs text-text-secondary mb-1">Email</label>
-              <input type="email" value={createEmail} onChange={(e) => setCreateEmail(e.target.value)}
-                className="w-full px-3 py-2 bg-surface border border-border rounded text-text-primary focus:outline-none focus:ring-2 focus:ring-accent text-sm" />
-            </div>
-            <div>
-              <label className="block text-xs text-text-secondary mb-1">Password</label>
-              <input type="password" required value={createPassword} onChange={(e) => setCreatePassword(e.target.value)}
-                className="w-full px-3 py-2 bg-surface border border-border rounded text-text-primary focus:outline-none focus:ring-2 focus:ring-accent text-sm" />
-            </div>
-            <div>
-              <label className="block text-xs text-text-secondary mb-1">Role</label>
-              <select value={createRole} onChange={(e) => setCreateRole(e.target.value)}
-                className="w-full px-3 py-2 bg-surface border border-border rounded text-text-primary focus:outline-none focus:ring-2 focus:ring-accent text-sm">
-                {availableRoles.map(r => <option key={r.id} value={r.id}>{r.name}</option>)}
-              </select>
-            </div>
+
+            <form onSubmit={handleCreateUser} className="space-y-3">
+              <div>
+                <label className="block text-xs text-text-secondary mb-1">Username</label>
+                <input type="text" required autoFocus value={createUsername} onChange={(e) => setCreateUsername(e.target.value)}
+                  className="w-full px-3 py-2 bg-surface border border-border rounded text-text-primary focus:outline-none focus:ring-2 focus:ring-accent text-sm" />
+              </div>
+              <div>
+                <label className="block text-xs text-text-secondary mb-1">Display Name</label>
+                <input type="text" required value={createDisplayName} onChange={(e) => setCreateDisplayName(e.target.value)}
+                  className="w-full px-3 py-2 bg-surface border border-border rounded text-text-primary focus:outline-none focus:ring-2 focus:ring-accent text-sm" />
+              </div>
+              <div>
+                <label className="block text-xs text-text-secondary mb-1">Email</label>
+                <input type="email" value={createEmail} onChange={(e) => setCreateEmail(e.target.value)}
+                  className="w-full px-3 py-2 bg-surface border border-border rounded text-text-primary focus:outline-none focus:ring-2 focus:ring-accent text-sm" />
+              </div>
+              <div>
+                <label className="block text-xs text-text-secondary mb-1">Password</label>
+                <input type="password" required value={createPassword} onChange={(e) => setCreatePassword(e.target.value)}
+                  className="w-full px-3 py-2 bg-surface border border-border rounded text-text-primary focus:outline-none focus:ring-2 focus:ring-accent text-sm" />
+              </div>
+              <div>
+                <label className="block text-xs text-text-secondary mb-1">Role</label>
+                <select value={createRole} onChange={(e) => setCreateRole(e.target.value)}
+                  className="w-full px-3 py-2 bg-surface border border-border rounded text-text-primary focus:outline-none focus:ring-2 focus:ring-accent text-sm">
+                  {availableRoles.map(r => <option key={r.id} value={r.id}>{r.name}</option>)}
+                </select>
+              </div>
+
+              <div className="flex gap-2 pt-1">
+                <button type="submit" disabled={creating}
+                  className="flex-1 py-2 px-4 bg-accent text-white rounded hover:bg-accent-hover disabled:opacity-50 font-medium text-sm">
+                  {creating ? 'Creating…' : 'Create User'}
+                </button>
+                <button type="button" onClick={() => setShowCreate(false)}
+                  className="px-4 py-2 border border-border rounded text-text-secondary hover:bg-surface-hover text-sm">
+                  Cancel
+                </button>
+              </div>
+            </form>
           </div>
-          <button type="submit" disabled={creating}
-            className="px-4 py-2 bg-accent text-white rounded hover:bg-accent-hover disabled:opacity-50 text-sm font-medium">
-            {creating ? 'Creating...' : 'Create User'}
-          </button>
-        </form>
+        </div>
       )}
 
       <div className="overflow-x-auto">

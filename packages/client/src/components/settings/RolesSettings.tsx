@@ -193,14 +193,16 @@ export function RolesSettings() {
 
       {/* Editor */}
       {isEditorOpen && (
-        <div className="border border-border rounded-lg bg-surface-alt p-5 space-y-4">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm"
+          onClick={(e) => { if (e.target === e.currentTarget) close(); }}>
+          <div className="bg-surface-alt border border-border rounded-lg shadow-xl w-full max-w-2xl p-6 space-y-4 max-h-[90vh] overflow-y-auto">
           <div className="flex items-center justify-between">
-            <h3 className="text-sm font-semibold text-text-primary">
+            <h3 className="text-base font-semibold text-text-primary">
               {creating ? 'New Role' : `Edit: ${editing!.name}`}
               {editing?.isBuiltin && <span className="text-xs font-normal text-text-secondary ml-2">(permissions only)</span>}
             </h3>
-            <button onClick={close} className="p-1 rounded hover:bg-surface text-text-secondary">
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+            <button onClick={close} className="p-1 rounded hover:bg-surface-hover text-text-secondary hover:text-text-primary">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                 <line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" />
               </svg>
             </button>
@@ -309,6 +311,7 @@ export function RolesSettings() {
             >
               {saving ? 'Saving…' : creating ? 'Create Role' : 'Save Changes'}
             </button>
+          </div>
           </div>
         </div>
       )}
