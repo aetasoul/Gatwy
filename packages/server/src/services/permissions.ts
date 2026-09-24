@@ -222,8 +222,8 @@ export function canWriteSharedGroup(groupId: string, userId: string, role: strin
 /**
  * Every directly-shared (capability='edit') group that is an ancestor-or-self of `groupId`
  * and grants this user/role write access to it — i.e. every distinct shared-folder "branch"
- * `groupId` is reachable through. Used to confine an editor's reparenting (Q12: "sub-folders
- * of the SAME shared folder") to within one such branch — canWriteSharedGroup alone only
+ * `groupId` is reachable through. Used to confine an editor's reparenting to sub-folders of
+ * the SAME shared folder, within one such branch — canWriteSharedGroup alone only
  * proves a folder is writable, not that it's part of the specific branch being reorganized,
  * so an editor holding two independent edit-shares from the same owner could otherwise use
  * one to reach into the other.
@@ -243,7 +243,7 @@ export function editableSharedRootsFor(groupId: string, userId: string, role: st
 }
 
 /** True when `sourceGroupId` and `targetGroupId` share at least one common editable-share
- * branch (see editableSharedRootsFor) — the Q12 boundary for editor reparenting. */
+ * branch (see editableSharedRootsFor) — the boundary that confines editor reparenting. */
 export function sameSharedBranch(sourceGroupId: string, targetGroupId: string, userId: string, role: string): boolean {
   const sourceRoots = editableSharedRootsFor(sourceGroupId, userId, role);
   if (sourceRoots.size === 0) return false;

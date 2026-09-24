@@ -54,8 +54,8 @@ interface ConnectionModalProps {
   /** When false, Moonlight is omitted from the protocol picker (runtime unavailable). */
   moonlightAvailable?: boolean;
   /** IDs of shared folders the caller has edit capability on but doesn't own — a connection
-   * filed there belongs to the folder's owner (Q2), so the caller's own private credentials
-   * are hidden from the picker below (they'd be hard-blocked on save anyway, Q5). */
+   * filed there belongs to the folder's owner, so the caller's own private credentials
+   * are hidden from the picker below (they'd be hard-blocked on save anyway). */
   sharedFolderIds?: Set<string>;
 }
 
@@ -263,8 +263,8 @@ export function ConnectionModal({ connection, groups, onClose, onSaved, prefill,
   const allowedCredTypes = credentialTypesFor(protocol);
   const selectedCred = library.find((c) => c.id === credentialId) ?? null;
   // A connection filed in a shared folder the caller doesn't own belongs to the folder's
-  // owner (Q2) — the caller's own private credentials would always be hard-blocked on save
-  // (Q5), so they're filtered out here rather than offered as a choice that can't work.
+  // owner — the caller's own private credentials would always be hard-blocked on save,
+  // so they're filtered out here rather than offered as a choice that can't work.
   const inSomeoneElsesFolder = !!groupId && !!sharedFolderIds?.has(groupId);
   // Shared connections may only reference shared credentials.
   const pickableCreds = library.filter((c) =>

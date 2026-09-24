@@ -288,7 +288,7 @@ export function Sidebar({ onConnect, onConnectMultiple, width }: SidebarProps) {
   const [draggingConnId, setDraggingConnId] = useState<string | null>(null);
   const [draggingGroupId, setDraggingGroupId] = useState<string | null>(null);
   // Which tree the current drag started in — an editor drag must stay confined to the
-  // shared subtree it came from (Q12); dropping it in the blank "remove from folder" area
+  // shared subtree it came from; dropping it in the blank "remove from folder" area
   // is disabled rather than silently un-filing someone else's connection/folder.
   const [draggingSourceMode, setDraggingSourceMode] = useState<GroupMode | null>(null);
   const [dragOverId, setDragOverId] = useState<string | null>(null);
@@ -842,7 +842,7 @@ export function Sidebar({ onConnect, onConnectMultiple, width }: SidebarProps) {
 
   function handleUngroupedDrop(e: React.DragEvent) {
     e.preventDefault();
-    // An editor's drag must stay confined to the shared folder it came from (Q12) — dropping
+    // An editor's drag must stay confined to the shared folder it came from — dropping
     // it here would un-file someone else's connection/folder outside anything shared to them.
     if (draggingSourceMode !== 'editor') {
       if (draggingConnId) moveConnection(draggingConnId, null);
@@ -964,7 +964,7 @@ export function Sidebar({ onConnect, onConnectMultiple, width }: SidebarProps) {
   // Shared folder IDs the caller has edit capability on — used both to build the connection
   // modal's folder picker options and to tell it when the selected folder isn't the caller's
   // own (so it can filter out the caller's own private credentials from the picker, since
-  // the server would hard-block them anyway: Q5, the connection belongs to the folder owner).
+  // the server would hard-block them anyway, since the connection belongs to the folder owner).
   const editableSharedGroupIds = useMemo(() => collectEditableGroupIds(sharedGroups), [sharedGroups]);
   const connectionFolderOptions = useMemo(() => {
     const editableShared = flattenGroups(sharedGroups).filter((g) => editableSharedGroupIds.has(g.id));
@@ -1050,7 +1050,7 @@ export function Sidebar({ onConnect, onConnectMultiple, width }: SidebarProps) {
     const mode: GroupMode = isOwnTree ? 'owner' : (group.capability === 'edit' ? 'editor' : 'viewer');
     const canWrite = mode !== 'viewer';
     // Even with edit capability, the shared folder itself (or an independently-shared
-    // sub-folder inside it) can never be renamed/deleted by a collaborator (Q3) — only its
+    // sub-folder inside it) can never be renamed/deleted by a collaborator — only its
     // contents. Content actions (create, drag contents in/out, reorder) are unaffected.
     const locked = !isOwnTree && !!group.locked;
     const expanded = isFiltering ? true : expandedGroups.has(group.id);
@@ -1792,7 +1792,7 @@ export function Sidebar({ onConnect, onConnectMultiple, width }: SidebarProps) {
               </button>
             </>
           )}
-          {/* Sharing management (Q11): never offered to an editor collaborator, regardless
+          {/* Sharing management: never offered to an editor collaborator, regardless
               of their own connections.share permission — only the folder's owner manages
               who it's shared with. */}
           {folderContextMenu.mode === 'owner' && canShareFolders && (

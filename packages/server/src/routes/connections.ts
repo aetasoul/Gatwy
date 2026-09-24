@@ -216,7 +216,7 @@ router.get('/', (req: Request, res: Response) => {
     capability?: 'view' | 'edit';
     /** Set only on nodes in the shared-folder tree: true when this exact folder carries a
      * share of its own (isSharedGroup) — the client must never offer rename/delete/share
-     * management on it even with edit capability (Q3), or an editor could destroy a share
+     * management on it even with edit capability, or an editor could destroy a share
      * unrelated to them. */
     locked?: boolean;
   }
@@ -524,7 +524,7 @@ router.post('/', (req: Request, res: Response) => {
   if (credentialId) {
     // Validated against the folder OWNER, not the caller — an editor linking their own
     // private library credential gets the same hard block the owner would ("Credential
-    // not found"), since the row this creates belongs to the owner either way (see Q2/Q5).
+    // not found"), since the row this creates belongs to the owner either way.
     const err = checkCredentialAssignable(credentialId, ownerId, effectiveShared, userCan(req, 'credentials.use_shared'));
     if (err) { res.status(400).json({ error: err }); return; }
   }
@@ -634,7 +634,10 @@ router.put('/:id', (req: Request, res: Response) => {
   const isOwner = existing.user_id === userId;
   const canEditAny = userCan(req, 'connections.edit_any');
   const canEditOwn = userCan(req, 'connections.edit_own');
-  const editorAccess = !isOwner && !canEditAny && !!existing.group_id && canWriteSharedGroup(existing.group_id, userId, role);
+  // A folder share grants access to that specific folder, it never bypasses the base RBAC
+  // permission — a role stripped of connections.edit_own must stay locked out even with an
+  // active editor share.
+  const editorAccess = !isOwner && !canEditAny && canEditOwn && !!existing.group_id && canWriteSharedGroup(existing.group_id, userId, role);
   if (isOwner && !canEditOwn && !canEditAny) {
     res.status(403).json({ error: 'Not authorized' });
     return;
@@ -655,8 +658,8 @@ router.put('/:id', (req: Request, res: Response) => {
   };
 
   const { name, protocol, host, port, username, password, groupId, privateKey, tunnels, extraConfig, tags, skipCertValidation, credentialId } = req.body;
-  // An editor collaborator can never touch the `shared` flag on someone else's connection
-  // (Q11/Q3) — silently ignored, same treatment as POST / at creation time, not a 403.
+  // An editor collaborator can never touch the `shared` flag on someone else's connection —
+  // silently ignored, same treatment as POST / at creation time, not a 403.
   const shared = editorAccess ? undefined : req.body.shared;
 
   if (blockedSharedUpdate(req, shared, existing.shared)) {
@@ -675,7 +678,7 @@ router.put('/:id', (req: Request, res: Response) => {
     res.status(400).json({ error: 'Invalid folder' });
     return;
   }
-  // Q12 scopes an editor's reparenting to sub-folders of the SAME shared folder they were
+  // An editor's reparenting is scoped to sub-folders of the SAME shared folder they were
   // granted edit access to — canWriteSharedGroup alone only proves the target is writable
   // by this editor, not that it's the same branch: an editor holding two independent
   // edit-shares from the same owner could otherwise use one to reach into the other.
@@ -688,7 +691,7 @@ router.put('/:id', (req: Request, res: Response) => {
   // linked one, or the existing one if the connection is becoming shared. Always checked
   // against the connection's actual owner (existing.user_id), never the caller — already
   // correct for the editor branch too, since an editor linking their own private
-  // credential must get the same hard block the owner would (Q2/Q5).
+  // credential must get the same hard block the owner would.
   const nextCredentialId: string | null = credentialId !== undefined ? (credentialId || null) : existing.credential_id;
   if (nextCredentialId && (credentialId !== undefined || shared !== undefined)) {
     const nextShared = isConnectionShared(id, shared !== undefined ? !!shared : existing.shared);
@@ -805,7 +808,9 @@ router.delete('/:id', (req: Request, res: Response) => {
   const isOwner = conn.user_id === userId;
   const canDeleteAny = userCan(req, 'connections.delete_any');
   const canDeleteOwn = userCan(req, 'connections.delete_own');
-  const editorAccess = !isOwner && !canDeleteAny && !!conn.group_id && canWriteSharedGroup(conn.group_id, userId, role);
+  // Same RBAC floor as PUT /:id — an editor share never substitutes for the base
+  // connections.delete_own permission.
+  const editorAccess = !isOwner && !canDeleteAny && canDeleteOwn && !!conn.group_id && canWriteSharedGroup(conn.group_id, userId, role);
   if (isOwner && !canDeleteOwn && !canDeleteAny) {
     res.status(403).json({ error: 'Not authorized' });
     return;
@@ -815,7 +820,7 @@ router.delete('/:id', (req: Request, res: Response) => {
     return;
   }
 
-  // Q13: an editor collaborator (never the owner, never connections.delete_any) may not
+  // An editor collaborator (never the owner, never connections.delete_any) may not
   // delete a connection the owner separately shared to someone else — resource_shares has
   // no FK cascade, so this would silently destroy that third party's share. The owner can
   // always delete, condivisions included, same as before resource_shares existed.
@@ -1030,7 +1035,7 @@ router.put('/groups/:id', (req: Request, res: Response) => {
   const canEditAny = userCan(req, 'connections.edit_any');
   // isSharedGroup excluded even when otherwise editor-writable: an editor may change
   // *contents* of a shared folder, never the shared folder (or an independently-shared
-  // sub-folder) itself — renaming it is not a content change (Q3).
+  // sub-folder) itself — renaming it is not a content change.
   const editorAccess = !isOwner && !canEditAny && canWriteSharedGroup(id, userId, role) && !isSharedGroup(id);
   if (!isOwner && !canEditAny && !editorAccess) { res.status(403).json({ error: 'Not authorized' }); return; }
 
@@ -1041,7 +1046,7 @@ router.put('/groups/:id', (req: Request, res: Response) => {
     res.status(400).json({ error: 'Invalid parent folder' });
     return;
   }
-  // Q12 scopes an editor's reparenting to sub-folders of the SAME shared folder they were
+  // An editor's reparenting is scoped to sub-folders of the SAME shared folder they were
   // granted edit access to — canWriteSharedGroup alone only proves the target is writable
   // by this editor, not that it's the same branch: an editor holding two independent
   // edit-shares from the same owner could otherwise use one to reach into the other.
@@ -1081,7 +1086,7 @@ router.delete('/groups/:id', (req: Request, res: Response) => {
   if (!group) { res.status(404).json({ error: 'Group not found' }); return; }
   const isOwner = group.user_id === userId;
   const canEditAny = userCan(req, 'connections.edit_any');
-  // Same isSharedGroup exclusion as PUT /groups/:id (Q3): deleting the shared folder
+  // Same isSharedGroup exclusion as PUT /groups/:id: deleting the shared folder
   // itself (or an independently-shared sub-folder) is not a content change.
   const editorAccess = !isOwner && !canEditAny && canWriteSharedGroup(id, userId, role) && !isSharedGroup(id);
   if (!isOwner && !canEditAny && !editorAccess) { res.status(403).json({ error: 'Not authorized' }); return; }
@@ -1107,7 +1112,7 @@ router.delete('/groups/:id', (req: Request, res: Response) => {
       ).map((r) => r.id)
     : [];
 
-  // Q13, editor branch only (never owner/edit_any): refuse the WHOLE deletion up front —
+  // Editor branch only (never owner/edit_any): refuse the WHOLE deletion up front —
   // before any write — if any connection about to be deleted carries its own share, so a
   // collaborator can't use "delete the folder" as a back door around the same guard on
   // DELETE /:id. Evaluated over the complete set first: doing this check mid-loop below

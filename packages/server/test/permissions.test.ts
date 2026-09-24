@@ -276,7 +276,7 @@ describe('permissions', () => {
     });
   });
 
-  describe('sameSharedBranch (Q12: editor reparenting confined to one shared branch)', () => {
+  describe('sameSharedBranch (editor reparenting confined to one shared branch)', () => {
     it('is true for two sub-folders of the same directly-shared root', () => {
       addGroup('b-root', ALICE);
       addGroup('b-child1', ALICE, 'b-root');
@@ -292,7 +292,7 @@ describe('permissions', () => {
       shareGroupEdit('b-rootA', 'user', CAROL);
       shareGroupEdit('b-rootB', 'user', CAROL);
       // Both are individually writable by CAROL, but they are two separate shares —
-      // moving between them is not "the same shared folder" (Q12).
+      // moving between them is not "the same shared folder".
       assert.equal(canWriteSharedGroup('b-rootA', CAROL, 'user'), true);
       assert.equal(canWriteSharedGroup('b-rootB', CAROL, 'user'), true);
       assert.equal(sameSharedBranch('b-rootA', 'b-rootB', CAROL, 'user'), false);
