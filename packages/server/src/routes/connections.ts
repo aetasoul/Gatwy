@@ -826,7 +826,7 @@ router.delete('/:id', (req: Request, res: Response) => {
   // always delete, condivisions included, same as before resource_shares existed.
   if (editorAccess && isSharedConnection(id)) {
     res.status(409).json({
-      error: 'This connection is shared with someone else. Ask the owner to remove that share first, or to delete it themselves.',
+      error: `This connection ("${conn.name}") is shared with someone else. Ask the owner to remove that share first, or to delete it themselves.`,
     });
     return;
   }
@@ -1105,12 +1105,13 @@ router.delete('/groups/:id', (req: Request, res: Response) => {
   // planted or not, needs its shares cleaned up explicitly or they'd be left orphaned.
   const allGroupIdsUnscoped = allDescendantGroupIdsUnscoped(id);
 
-  const connectionIdsToDelete = ownerScopedIds.length > 0
-    ? queryAll<{ id: string }>(
-        `SELECT id FROM connections WHERE group_id IN (${ownerScopedIds.map(() => '?').join(',')}) AND user_id = ?`,
+  const connectionRowsToDelete = ownerScopedIds.length > 0
+    ? queryAll<{ id: string; name: string }>(
+        `SELECT id, name FROM connections WHERE group_id IN (${ownerScopedIds.map(() => '?').join(',')}) AND user_id = ?`,
         [...ownerScopedIds, ownerId],
-      ).map((r) => r.id)
+      )
     : [];
+  const connectionIdsToDelete = connectionRowsToDelete.map((r) => r.id);
 
   // Editor branch only (never owner/edit_any): refuse the WHOLE deletion up front —
   // before any write — if any connection about to be deleted carries its own share, so a
@@ -1118,11 +1119,15 @@ router.delete('/groups/:id', (req: Request, res: Response) => {
   // DELETE /:id. Evaluated over the complete set first: doing this check mid-loop below
   // would leave a partially-deleted subtree on the reject path.
   if (editorAccess) {
-    const blockedConnectionId = connectionIdsToDelete.find((cid) => isSharedConnection(cid));
-    if (blockedConnectionId) {
-      res.status(409).json({
-        error: 'This folder contains a connection that is shared with someone else. Ask the owner to remove that share first, or to delete it themselves.',
-      });
+    const blockedConnectionNames = connectionRowsToDelete
+      .filter((r) => isSharedConnection(r.id))
+      .map((r) => r.name);
+    if (blockedConnectionNames.length > 0) {
+      const list = blockedConnectionNames.map((n) => `"${n}"`).join(', ');
+      const error = blockedConnectionNames.length === 1
+        ? `This folder contains a connection that is shared with someone else (${list}). Ask the owner to remove that share first, or to delete it themselves.`
+        : `This folder contains connections that are shared with someone else (${list}). Ask the owner to remove those shares first, or to delete them themselves.`;
+      res.status(409).json({ error });
       return;
     }
   }
