@@ -259,6 +259,7 @@ export function DbSession({ connectionId, connectionName, isActive, onStatusChan
               totalRows={result?.totalRows ?? 0}
               pageSize={result?.pageSize ?? rowLimit}
               onPageChange={handlePageChange}
+              onExport={(format) => handleExport(lastSqlRef.current, format)}
             />
           </div>
 

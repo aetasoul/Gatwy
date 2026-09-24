@@ -225,12 +225,14 @@ router.get('/:connectionId/table/:tableName', async (req: Request, res: Response
       try {
         const result = await pgClient.query(
           `SELECT c.column_name, c.data_type, c.is_nullable,
-                  CASE WHEN kcu.column_name IS NOT NULL THEN true ELSE false END AS is_pk
+                  EXISTS (
+                    SELECT 1 FROM information_schema.key_column_usage kcu
+                    JOIN information_schema.table_constraints tc
+                      ON tc.constraint_schema = kcu.constraint_schema AND tc.constraint_name = kcu.constraint_name
+                    WHERE tc.constraint_type = 'PRIMARY KEY'
+                      AND kcu.table_schema = c.table_schema AND kcu.table_name = c.table_name AND kcu.column_name = c.column_name
+                  ) AS is_pk
            FROM information_schema.columns c
-           LEFT JOIN information_schema.key_column_usage kcu
-             ON kcu.table_schema = c.table_schema AND kcu.table_name = c.table_name AND kcu.column_name = c.column_name
-           LEFT JOIN information_schema.table_constraints tc
-             ON tc.constraint_name = kcu.constraint_name AND tc.constraint_type = 'PRIMARY KEY'
            WHERE c.table_schema = $1 AND c.table_name = $2
            ORDER BY c.ordinal_position`,
           [schema, tableName],
@@ -330,6 +332,12 @@ router.post('/:connectionId/query', async (req: Request, res: Response) => {
         try {
           await pgClient.query(`SET statement_timeout = ${pool.queryTimeoutMs}`);
           const result = await pgClient.query(dataQuery);
+          // node-pg's simple query protocol splits a semicolon-separated string into
+          // multiple statements and returns an array of results instead of a single
+          // one — reject explicitly rather than crash on the missing .fields below.
+          if (Array.isArray(result)) {
+            throw new Error('Multiple statements in a single query are not supported. Run one statement at a time.');
+          }
           columns = result.fields.map((f: { name: string }) => f.name);
           if (columns.length > 0) {
             rows = (result.rows as Record<string, unknown>[]).map(r => columns.map(c => r[c] ?? null));
@@ -490,6 +498,10 @@ router.post('/:connectionId/export', async (req: Request, res: Response) => {
       try {
         await pgClient.query(`SET statement_timeout = ${pool.queryTimeoutMs}`);
         const result = await pgClient.query(queryText);
+        if (Array.isArray(result)) {
+          res.status(400).json({ error: 'Multiple statements in a single query are not supported. Run one statement at a time.' });
+          return;
+        }
         columns = result.fields.map((f: { name: string }) => f.name);
         rows = result.rows.map((r: Record<string, unknown>) => columns.map(c => r[c] ?? null));
       } finally { pgClient.release(); }
@@ -521,8 +533,8 @@ router.post('/:connectionId/export', async (req: Request, res: Response) => {
     } else {
       const escape = (v: unknown): string => {
         if (v === null || v === undefined) return '';
-        const s = String(v);
-        if (s.includes(',') || s.includes('"') || s.includes('\n')) return `"${s.replace(/"/g, '""')}"`;
+        const s = v instanceof Date ? v.toISOString() : typeof v === 'object' ? JSON.stringify(v) : String(v);
+        if (s.includes(',') || s.includes('"') || s.includes('\n') || s.includes('\r')) return `"${s.replace(/"/g, '""')}"`;
         return s;
       };
       const lines = [columns.join(','), ...rows.map(r => r.map(escape).join(','))];
