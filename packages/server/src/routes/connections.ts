@@ -166,12 +166,22 @@ router.get('/', (req: Request, res: Response) => {
   // Folders (owned by someone else) reachable via a folder share — resolved live, so a
   // new sub-folder or connection dropped in later shows up without any extra share row.
   const sharedGroupIdList = accessibleSharedGroupIds(userId, userRole);
-  let sharedGroupRows: (GroupRow & { user_id: string })[] = [];
+  let sharedGroupRows: (GroupRow & { user_id: string; owner_display_name: string | null })[] = [];
   let sharedGroupConnRows: ConnectionRow[] = [];
   if (sharedGroupIdList.length > 0) {
     const groupPlaceholders = sharedGroupIdList.map(() => '?').join(',');
-    sharedGroupRows = queryAll<GroupRow & { user_id: string }>(
-      `SELECT id, name, parent_id, sort_order, user_id FROM connection_groups WHERE id IN (${groupPlaceholders}) AND user_id != ?`,
+    // owner_display_name: who to show the recipient in "Shared by <name>" — joined here so
+    // it's available on every node of the shared tree (see the sharedGroupMap loop below),
+    // not just the directly-shared root. LEFT JOIN, not JOIN: an INNER join would drop any
+    // shared group (and its connections, sourced from these rows below) whose owner row is
+    // gone — FK enforcement doesn't actually run in this app (see users.ts), so a deleted
+    // owner's groups can outlive them. Losing the folder from the recipient's tree over a
+    // missing label would be worse than showing it without one.
+    sharedGroupRows = queryAll<GroupRow & { user_id: string; owner_display_name: string | null }>(
+      `SELECT cg.id, cg.name, cg.parent_id, cg.sort_order, cg.user_id, u.display_name AS owner_display_name
+       FROM connection_groups cg
+       LEFT JOIN users u ON u.id = cg.user_id
+       WHERE cg.id IN (${groupPlaceholders}) AND cg.user_id != ?`,
       [...sharedGroupIdList, userId],
     );
     if (sharedGroupRows.length > 0) {
@@ -219,6 +229,11 @@ router.get('/', (req: Request, res: Response) => {
      * management on it even with edit capability, or an editor could destroy a share
      * unrelated to them. */
     locked?: boolean;
+    /** Set only on nodes in the shared-folder tree (never on the owner's own rootGroups):
+     * the display name of the user who owns this folder, so a recipient's right-click menu
+     * can show "Shared by <name>" — on every node of the branch, not just the directly-
+     * shared root, since a right-click on a sub-folder needs it too. */
+    ownerName?: string;
   }
 
   function buildTree(rows: GroupRow[]): { map: Map<string, GroupNode>; roots: GroupNode[] } {
@@ -257,9 +272,11 @@ router.get('/', (req: Request, res: Response) => {
   // (its own unshared ancestors, if any, are simply not part of the tree).
   const { map: sharedGroupMap, roots: sharedRootGroups } = buildTree(sharedGroupRows);
   const editableGroupIdSet = new Set(editableSharedGroupIds(userId, userRole));
+  const ownerNameByGroupId = new Map(sharedGroupRows.map((g) => [g.id, g.owner_display_name]));
   for (const node of sharedGroupMap.values()) {
     node.capability = editableGroupIdSet.has(node.id) ? 'edit' : 'view';
     node.locked = isSharedGroup(node.id);
+    node.ownerName = ownerNameByGroupId.get(node.id) ?? undefined;
   }
   const sharedGroupConnMapped = sharedGroupConnRows.map((c) => mapConn(c, true));
   for (const conn of sharedGroupConnMapped) {

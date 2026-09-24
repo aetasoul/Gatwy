@@ -24,6 +24,9 @@ interface ConnectionGroup {
    * own, whoever it's shared with — an editor may never rename/delete it even with edit
    * capability, or an unrelated share on it could be silently destroyed. */
   locked?: boolean;
+  /** Only set on nodes under "Shared" (never on the caller's own tree): the display name
+   * of the folder's owner, for the "Shared by <name>" context-menu item. */
+  ownerName?: string;
 }
 
 /** Effective UI capability for a folder or connection: 'owner' is the caller's own tree,
@@ -1727,6 +1730,21 @@ export function Sidebar({ onConnect, onConnectMultiple, width }: SidebarProps) {
           style={{ left: folderMenuPos.x, top: folderMenuPos.y }}
           onMouseLeave={() => setShowNewConnSubmenu(false)}
         >
+          {/* Info-only, never for the owner — recipients only, so they know whose folder
+              this is. Not a button: nothing to click, it's just a label. */}
+          {folderContextMenu.mode !== 'owner' && folderContextMenu.group.ownerName && (
+            <>
+              <div className="px-3 py-1.5 text-xs text-text-secondary flex items-center gap-2">
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                  <path d="M4 12v8a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-8" />
+                  <polyline points="16 6 12 2 8 6" />
+                  <line x1="12" y1="2" x2="12" y2="15" />
+                </svg>
+                Shared by {folderContextMenu.group.ownerName}
+              </div>
+              <div className="border-t border-border my-1" />
+            </>
+          )}
           {onConnectMultiple && (
             <button
               className="w-full px-3 py-1.5 text-left hover:bg-surface-hover text-text-primary flex items-center gap-2"
