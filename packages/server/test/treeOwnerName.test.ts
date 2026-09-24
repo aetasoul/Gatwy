@@ -10,7 +10,7 @@ process.env.DATA_DIR = dataDir;
 process.env.JWT_SECRET = 'tree-owner-name-test-secret';
 
 const { initDb, closeDb } = await import('../src/db/index.js');
-const { execute } = await import('../src/db/helpers.js');
+const { execute, queryOne } = await import('../src/db/helpers.js');
 const { initJwt, signToken } = await import('../src/services/jwt.js');
 const { default: connectionsRouter } = await import('../src/routes/connections.js');
 const { default: express } = await import('express');
@@ -114,5 +114,50 @@ describe('GET / — ownerName on the shared-folder tree, recipient-only', () => 
     const sub = findNode(body.groups, subGroupId);
     assert.ok(sub, 'owner sees the sub-folder too');
     assert.equal(sub?.ownerName, undefined);
+  });
+});
+
+describe('GET / — LEFT JOIN keeps a shared folder in the tree when its owner row is gone', () => {
+  // Simulates data left behind from before the resource_shares cleanup added in the prior
+  // commit: the owner row is gone but the group and its share survive (no FK cascade
+  // actually fires in this app — see routes/users.ts). Deletes the user directly with raw
+  // SQL, bypassing DELETE /api/v1/users/:id, specifically to recreate that pre-cleanup state
+  // rather than exercise the route's own cleanup.
+  const goneOwnerId = 'user-tree-owner-gone';
+  const recipientId2 = 'user-tree-recipient-of-gone-owner';
+  const groupId = 'g-tree-owner-gone-group';
+  let recipientToken2: string;
+
+  before(async () => {
+    execute(
+      `INSERT INTO users (id, username, password_hash, display_name, role) VALUES (?, ?, ?, ?, ?)`,
+      [goneOwnerId, 'tree-owner-gone', 'x', 'Soon Gone', 'user'],
+    );
+    execute(
+      `INSERT INTO users (id, username, password_hash, display_name, role) VALUES (?, ?, ?, ?, ?)`,
+      [recipientId2, 'tree-recipient-of-gone', 'x', 'Recipient Of Gone Owner', 'user'],
+    );
+    recipientToken2 = signToken({ userId: recipientId2, username: 'tree-recipient-of-gone', role: 'user' });
+
+    execute('INSERT INTO connection_groups (id, user_id, name, parent_id) VALUES (?, ?, ?, NULL)', [groupId, goneOwnerId, 'Group of a gone owner']);
+    execute(
+      `INSERT INTO resource_shares (id, resource_type, resource_id, share_type, target_id, capability) VALUES (?, 'group', ?, 'user', ?, 'view')`,
+      ['share-tree-gone-owner-to-recipient', groupId, recipientId2],
+    );
+
+    execute('DELETE FROM users WHERE id = ?', [goneOwnerId]);
+  });
+
+  it('keeps the folder in the tree iff its row still exists, with ownerName undefined when the owner is gone', async () => {
+    const res = await authedFetch(recipientToken2, baseUrl);
+    assert.equal(res.status, 200);
+    const body = await res.json() as { sharedGroups: GroupNode[] };
+
+    const groupRow = queryOne('SELECT id FROM connection_groups WHERE id = ?', [groupId]);
+    const node = findNode(body.sharedGroups, groupId);
+    assert.equal(!!node, !!groupRow, 'folder must appear in the tree iff its row still exists — an inner JOIN would drop it even though the row is there');
+    if (node) {
+      assert.equal(node.ownerName, undefined, 'no display name to show when the owner row is gone');
+    }
   });
 });
