@@ -521,8 +521,8 @@ router.post('/:connectionId/export', async (req: Request, res: Response) => {
     } else {
       const escape = (v: unknown): string => {
         if (v === null || v === undefined) return '';
-        const s = String(v);
-        if (s.includes(',') || s.includes('"') || s.includes('\n')) return `"${s.replace(/"/g, '""')}"`;
+        const s = v instanceof Date ? v.toISOString() : typeof v === 'object' ? JSON.stringify(v) : String(v);
+        if (s.includes(',') || s.includes('"') || s.includes('\n') || s.includes('\r')) return `"${s.replace(/"/g, '""')}"`;
         return s;
       };
       const lines = [columns.join(','), ...rows.map(r => r.map(escape).join(','))];
