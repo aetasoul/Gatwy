@@ -100,8 +100,8 @@ function groupNameForAudit(groupId: string | null): string | null {
 /** Attaches a human-readable targetName (role name or username) to each share entry,
  * so an audit log entry stays readable instead of just showing raw role/user ids. */
 function resolveShareTargetNames(
-  entries: { shareType: string; targetId: string }[],
-): { shareType: string; targetId: string; targetName: string }[] {
+  entries: { shareType: string; targetId: string; capability?: string }[],
+): { shareType: string; targetId: string; targetName: string; capability?: string }[] {
   const roleIds = entries.filter((e) => e.shareType === 'role').map((e) => e.targetId);
   const userIds = entries.filter((e) => e.shareType === 'user').map((e) => e.targetId);
   const roleNames = new Map<string, string>();
@@ -1236,6 +1236,35 @@ router.put('/groups/:id/shares', (req: Request, res: Response) => {
     details: { before: resolveShareTargetNames(before), after: resolveShareTargetNames(after) },
     ipAddress: req.ip,
   });
+
+  // Separate, narrower event for a pure capability change on an EXISTING recipient —
+  // 'group.shares_updated' already carries this in its full before/after, but bundled
+  // with any add/remove it's not filterable in the audit UI. Keyed on shareType+targetId,
+  // limited to targets present in both snapshots whose capability actually differs, so a
+  // recipient being added or removed (never in both maps) never triggers this event.
+  const beforeByKey = new Map(before.map((s) => [`${s.shareType}:${s.targetId}`, s]));
+  const afterByKey = new Map(after.map((s) => [`${s.shareType}:${s.targetId}`, s]));
+  const capabilityChanged: { shareType: string; targetId: string; capability: string }[] = [];
+  const capabilityChangedBefore: typeof before = [];
+  for (const [key, afterEntry] of afterByKey) {
+    const beforeEntry = beforeByKey.get(key);
+    if (beforeEntry && beforeEntry.capability !== afterEntry.capability) {
+      capabilityChangedBefore.push(beforeEntry);
+      capabilityChanged.push(afterEntry);
+    }
+  }
+  if (capabilityChanged.length > 0) {
+    logAudit({
+      userId,
+      eventType: 'group.share_capability_changed',
+      target: group.name,
+      details: {
+        before: resolveShareTargetNames(capabilityChangedBefore),
+        after: resolveShareTargetNames(capabilityChanged),
+      },
+      ipAddress: req.ip,
+    });
+  }
 
   // Folder sharing never re-validates each connection's credential the way per-connection
   // sharing does — a private library credential inside just goes null for recipients
