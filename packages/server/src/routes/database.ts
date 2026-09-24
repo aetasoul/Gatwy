@@ -225,12 +225,14 @@ router.get('/:connectionId/table/:tableName', async (req: Request, res: Response
       try {
         const result = await pgClient.query(
           `SELECT c.column_name, c.data_type, c.is_nullable,
-                  CASE WHEN kcu.column_name IS NOT NULL THEN true ELSE false END AS is_pk
+                  EXISTS (
+                    SELECT 1 FROM information_schema.key_column_usage kcu
+                    JOIN information_schema.table_constraints tc
+                      ON tc.constraint_schema = kcu.constraint_schema AND tc.constraint_name = kcu.constraint_name
+                    WHERE tc.constraint_type = 'PRIMARY KEY'
+                      AND kcu.table_schema = c.table_schema AND kcu.table_name = c.table_name AND kcu.column_name = c.column_name
+                  ) AS is_pk
            FROM information_schema.columns c
-           LEFT JOIN information_schema.key_column_usage kcu
-             ON kcu.table_schema = c.table_schema AND kcu.table_name = c.table_name AND kcu.column_name = c.column_name
-           LEFT JOIN information_schema.table_constraints tc
-             ON tc.constraint_name = kcu.constraint_name AND tc.constraint_type = 'PRIMARY KEY'
            WHERE c.table_schema = $1 AND c.table_name = $2
            ORDER BY c.ordinal_position`,
           [schema, tableName],
