@@ -330,6 +330,12 @@ router.post('/:connectionId/query', async (req: Request, res: Response) => {
         try {
           await pgClient.query(`SET statement_timeout = ${pool.queryTimeoutMs}`);
           const result = await pgClient.query(dataQuery);
+          // node-pg's simple query protocol splits a semicolon-separated string into
+          // multiple statements and returns an array of results instead of a single
+          // one — reject explicitly rather than crash on the missing .fields below.
+          if (Array.isArray(result)) {
+            throw new Error('Multiple statements in a single query are not supported. Run one statement at a time.');
+          }
           columns = result.fields.map((f: { name: string }) => f.name);
           if (columns.length > 0) {
             rows = (result.rows as Record<string, unknown>[]).map(r => columns.map(c => r[c] ?? null));
@@ -490,6 +496,10 @@ router.post('/:connectionId/export', async (req: Request, res: Response) => {
       try {
         await pgClient.query(`SET statement_timeout = ${pool.queryTimeoutMs}`);
         const result = await pgClient.query(queryText);
+        if (Array.isArray(result)) {
+          res.status(400).json({ error: 'Multiple statements in a single query are not supported. Run one statement at a time.' });
+          return;
+        }
         columns = result.fields.map((f: { name: string }) => f.name);
         rows = result.rows.map((r: Record<string, unknown>) => columns.map(c => r[c] ?? null));
       } finally { pgClient.release(); }
