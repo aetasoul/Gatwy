@@ -1,4 +1,4 @@
-import { Router, type Request, type Response } from 'express';
+import express, { Router, type Request, type Response } from 'express';
 import { queryOne } from '../db/helpers.js';
 import { authRequired, requirePermission } from '../middleware/auth.js';
 import { decrypt } from '../services/encryption.js';
@@ -181,7 +181,9 @@ router.get('/:connectionId/download', async (req: Request, res: Response) => {
 });
 
 // POST /:connectionId/upload — upload a file
-router.post('/:connectionId/upload', async (req: Request, res: Response) => {
+// SECURITY: express.raw() here (not at the app level) so the body is only read after
+// router.use(authRequired)/requirePermission above have run. (GHSA-r6f8-6m52-5jvf)
+router.post('/:connectionId/upload', express.raw({ limit: '100mb', type: '*/*' }), async (req: Request, res: Response) => {
   const userId = req.user!.userId;
   const conn = await getConn(req.params.connectionId as string, userId, req.user!.role);
   if (!conn) { res.status(404).json({ error: 'Connection not found' }); return; }
@@ -189,11 +191,13 @@ router.post('/:connectionId/upload', async (req: Request, res: Response) => {
   const filePath = req.query.path as string;
   if (!filePath) { res.status(400).json({ error: 'path required' }); return; }
 
+  if (!Buffer.isBuffer(req.body)) { res.status(400).json({ error: 'Invalid upload body' }); return; }
+
   let smb: SMB2 | null = null;
 
   try {
     smb = makeSmbClient(conn);
-    const fileData = req.body as Buffer;
+    const fileData = req.body;
     const stream = await smbOp(() => smb!.createWriteStream(filePath));
     await new Promise<void>((resolve, reject) => {
       stream.on('finish', resolve);

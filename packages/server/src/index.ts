@@ -91,11 +91,13 @@ async function main() {
       },
     },
   }));
-  app.use(`${bp}/api/v1/smb/:connectionId/upload`, express.raw({ limit: '100mb', type: '*/*' }));
-  app.use(`${bp}/api/v1/sftp/:connectionId/upload`, express.raw({ limit: '100mb', type: '*/*' }));
-  app.use(`${bp}/api/v1/ftp/:connectionId/upload`, express.raw({ limit: '100mb', type: '*/*' }));
-  app.use(`${bp}/api/v1/sessions/:id/recording/chunk`, express.raw({ limit: '100mb', type: '*/*' }));
-  app.use(`${bp}/api/v1/backup/import`, express.raw({ limit: '4gb', type: 'application/octet-stream' }));
+  // SECURITY: the raw-body parsers for SMB/SFTP/FTP upload, recording chunks, and backup
+  // import used to be mounted here, at the app level, before cookieParser/CSRF/ipRulesMiddleware
+  // and before each router's authRequired/requirePermission. That let an unauthenticated
+  // request buffer its entire body (up to 4 GB for /backup/import) into memory before any
+  // auth check ran. Each parser now lives on its own route, after that route's auth
+  // middleware — see routes/smb.ts, routes/sftp.ts, routes/ftp.ts, routes/sessions.ts
+  // (recording/chunk) and routes/backup.ts (import). (GHSA-r6f8-6m52-5jvf)
   app.use(express.json({ limit: '6mb' })); // allow base64-encoded logos (~4 MB image → ~5.4 MB base64)
   app.use(cookieParser());
 

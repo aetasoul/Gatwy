@@ -1,4 +1,4 @@
-import { Router, type Request, type Response } from 'express';
+import express, { Router, type Request, type Response } from 'express';
 import fs from 'fs';
 import path from 'path';
 import crypto from 'crypto';
@@ -149,7 +149,10 @@ router.post('/export', requirePermission('settings.backup'), (req: Request, res:
 
 // POST /import — restore system from encrypted backup
 // Body: raw .geb binary. Password in X-Backup-Password header.
-router.post('/import', requirePermission('settings.backup'), async (req: Request, res: Response) => {
+// SECURITY: express.raw() comes after requirePermission (which calls authRequired), not at
+// the app level, so the body is only read once the caller is authenticated and authorized.
+// (GHSA-r6f8-6m52-5jvf)
+router.post('/import', requirePermission('settings.backup'), express.raw({ limit: '4gb', type: 'application/octet-stream' }), async (req: Request, res: Response) => {
   const password = req.headers['x-backup-password'];
   if (!password || typeof password !== 'string') {
     res.status(400).json({ error: 'X-Backup-Password header required' });

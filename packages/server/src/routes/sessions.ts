@@ -1,4 +1,4 @@
-import { Router, type Request, type Response } from 'express';
+import express, { Router, type Request, type Response } from 'express';
 import fs from 'fs';
 import path from 'path';
 import { v4 as uuid } from 'uuid';
@@ -261,7 +261,10 @@ router.post('/rdp-file-transfer', (req: Request, res: Response) => {
 });
 
 // POST /:id/recording/chunk — append a binary WebM chunk to the recording file
-router.post('/:id/recording/chunk', (req: Request, res: Response) => {
+// SECURITY: express.raw() here (not at the app level) so the body is only read after
+// router.use(authRequired) above has run. (GHSA-r6f8-6m52-5jvf)
+router.post('/:id/recording/chunk', express.raw({ limit: '100mb', type: '*/*' }), (req: Request, res: Response) => {
+  if (!Buffer.isBuffer(req.body)) { res.status(400).json({ error: 'Invalid chunk body' }); return; }
   const userId = req.user!.userId;
   const canViewAny = userCan(req, 'sessions.view_any');
   const id = req.params.id as string;
@@ -291,7 +294,7 @@ router.post('/:id/recording/chunk', (req: Request, res: Response) => {
       writer = openRdpRecordingFile(filePath);
       rdpWriters.set(id, writer);
     }
-    writer.writeChunk(req.body as Buffer);
+    writer.writeChunk(req.body);
   } catch {
     res.status(500).json({ error: 'Failed to write chunk' }); return;
   }
