@@ -8,7 +8,7 @@ import { config } from '../config.js';
 const MLW_USER = 'gatwy';
 const MLW_HEADER = 'X-Gatwy-Moonlight-User';
 const DEFAULT_BIND = '127.0.0.1:19080';
-const PATH_PREFIX = '/mlw';
+const MLW_SEGMENT = '/mlw';
 const BINARY_DIR = '/opt/moonlight-web';
 const WEBRTC_PORT_MIN = 40000;
 const WEBRTC_PORT_MAX = 40100;
@@ -60,6 +60,12 @@ function resolveBinaryDir(): string {
   return BINARY_DIR;
 }
 
+// moonlight-web prefixes every URL its pages request with this, so it must equal the path the
+// browser reaches it on — including the reverse-proxy BASE_PATH.
+function pathPrefix(): string {
+  return `${config.basePathPrefix}${MLW_SEGMENT}`;
+}
+
 function bindHostPort(): { host: string; port: number } {
   const [host, portStr] = DEFAULT_BIND.split(':');
   return { host: host || '127.0.0.1', port: parseInt(portStr || '19080', 10) };
@@ -72,7 +78,7 @@ function writeConfig(dir: string): string {
   const cfg: Record<string, unknown> = {
     web_server: {
       bind_address: `${host}:${port}`,
-      url_path_prefix: PATH_PREFIX,
+      url_path_prefix: pathPrefix(),
       forwarded_header: {
         username_header: MLW_HEADER,
         auto_create_missing_user: true,
@@ -151,7 +157,7 @@ async function waitForReady(
       });
     }
     try {
-      await mlwRequest('GET', '/mlw/config.js');
+      await mlwRequest('GET', `${pathPrefix()}/config.js`);
       return;
     } catch {
       await new Promise((r) => setTimeout(r, 250));
@@ -216,7 +222,7 @@ function startHealth(proc: ChildProcess): void {
   stopHealth();
   healthTimer = setInterval(() => {
     if (proc !== child || proc.killed || proc.exitCode !== null) return;
-    void mlwRequest('GET', '/mlw/config.js', undefined, { timeoutMs: 4000 }).catch(() => {
+    void mlwRequest('GET', `${pathPrefix()}/config.js`, undefined, { timeoutMs: 4000 }).catch(() => {
       recordFailure('Moonlight web-server stopped responding; restarting');
       try { proc.kill('SIGTERM'); } catch { /* exit handler restarts */ }
     });
@@ -267,7 +273,7 @@ function spawnMoonlightWeb(): Promise<void> {
     [
       '--config-path', configPath,
       '--bind-address', DEFAULT_BIND,
-      '--path-prefix', PATH_PREFIX,
+      '--path-prefix', pathPrefix(),
       '--forwarded-header', MLW_HEADER,
       '--webrtc-port-range', `${WEBRTC_PORT_MIN}:${WEBRTC_PORT_MAX}`,
       'run',
@@ -502,14 +508,14 @@ export async function mlwNdjson(
 }
 
 export async function mlwGetHost(hostId: number): Promise<MlwHost> {
-  const res = await mlwRequest('GET', `${PATH_PREFIX}/api/host?host_id=${hostId}`);
+  const res = await mlwRequest('GET', `${pathPrefix()}/api/host?host_id=${hostId}`);
   if (res.status >= 400) throw new Error(`Failed to get host: ${res.body.toString('utf8')}`);
   const data = JSON.parse(res.body.toString('utf8')) as { host: MlwHost };
   return data.host;
 }
 
 export async function mlwAddHost(address: string, httpPort: number): Promise<MlwHost> {
-  const res = await mlwRequest('POST', `${PATH_PREFIX}/api/host`, {
+  const res = await mlwRequest('POST', `${pathPrefix()}/api/host`, {
     address,
     http_port: httpPort,
   });
@@ -527,14 +533,14 @@ export async function mlwAddHost(address: string, httpPort: number): Promise<Mlw
 }
 
 export async function mlwDeleteHost(hostId: number): Promise<void> {
-  const res = await mlwRequest('DELETE', `${PATH_PREFIX}/api/host?host_id=${hostId}`);
+  const res = await mlwRequest('DELETE', `${pathPrefix()}/api/host?host_id=${hostId}`);
   if (res.status >= 400 && res.status !== 404) {
     throw new Error(`Failed to delete host: ${res.body.toString('utf8')}`);
   }
 }
 
 export async function mlwListApps(hostId: number): Promise<MlwApp[]> {
-  const res = await mlwRequest('GET', `${PATH_PREFIX}/api/apps?host_id=${hostId}`);
+  const res = await mlwRequest('GET', `${pathPrefix()}/api/apps?host_id=${hostId}`);
   if (res.status >= 400) throw new Error(`Failed to list apps: ${res.body.toString('utf8')}`);
   const data = JSON.parse(res.body.toString('utf8')) as { apps: MlwApp[] };
   return data.apps ?? [];
@@ -553,7 +559,7 @@ export async function mlwPair(
 
   await mlwNdjson(
     'POST',
-    `${PATH_PREFIX}/api/pair`,
+    `${pathPrefix()}/api/pair`,
     { host_id: hostId },
     (obj) => {
       if (obj && typeof obj === 'object' && 'Pin' in (obj as object)) {
@@ -637,7 +643,7 @@ export function restorePairInfoToStorage(hostId: number, pairInfo: MlwPairInfo):
 }
 
 export function moonlightPathPrefix(): string {
-  return PATH_PREFIX;
+  return pathPrefix();
 }
 
 export function moonlightProxyHeader(): { name: string; value: string } {

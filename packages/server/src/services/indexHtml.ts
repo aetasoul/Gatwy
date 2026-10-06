@@ -15,3 +15,17 @@ export function renderIndexHtml(clientDir: string, basePath: string): string {
   html = html.replace(/<\/head>/, headInjection);
   return html;
 }
+
+/** The PWA manifest with its root-absolute URLs moved under the reverse-proxy prefix. */
+export function renderManifest(clientDir: string, basePath: string): string {
+  const manifest = JSON.parse(fs.readFileSync(path.join(clientDir, 'manifest.webmanifest'), 'utf-8')) as {
+    start_url?: string;
+    scope?: string;
+    icons?: { src: string }[];
+  };
+  const prefix = (u: string | undefined) => (u && u.startsWith('/') ? `${basePath}${u}` : u);
+  manifest.start_url = prefix(manifest.start_url);
+  manifest.scope = prefix(manifest.scope);
+  manifest.icons = manifest.icons?.map((i) => ({ ...i, src: prefix(i.src) as string }));
+  return JSON.stringify(manifest);
+}

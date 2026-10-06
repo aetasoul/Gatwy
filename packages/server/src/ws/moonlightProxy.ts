@@ -34,6 +34,11 @@ function shouldProxy(url: string | undefined, prefix: string): boolean {
   return url === prefix || url.startsWith(`${prefix}/`) || url.startsWith(`${prefix}?`);
 }
 
+/** moonlight-web runs with the full public prefix (BASE_PATH + /mlw), so the path is forwarded as-is. */
+export function upstreamPath(originalUrl: string, reqUrl: string, mountPrefix: string): string {
+  return originalUrl.startsWith(mountPrefix) ? originalUrl : `${mountPrefix}${reqUrl}`;
+}
+
 function unavailableBody() {
   const runtimeError = getMoonlightRuntimeError();
   if (!runtimeError) return MOONLIGHT_UNAVAILABLE_BODY;
@@ -81,15 +86,7 @@ export function setupMoonlightProxy(server: Server, app: import('express').Expre
     }
 
     const upstream = moonlightUpstream();
-    const effectiveUrl = basePath && req.originalUrl.startsWith(basePath)
-      ? req.originalUrl.slice(basePath.length)
-      : req.originalUrl;
-    const effectiveReqUrl = basePath && req.url.startsWith(basePath)
-      ? req.url.slice(basePath.length)
-      : req.url;
-    const targetPath = effectiveUrl.startsWith(PREFIX)
-      ? effectiveUrl
-      : `${PREFIX}${effectiveReqUrl}`;
+    const targetPath = upstreamPath(req.originalUrl, req.url, mountPrefix);
 
     const headers: http.OutgoingHttpHeaders = { ...req.headers, host: `${upstream.host}:${upstream.port}` };
     headers[header.name] = header.value;
@@ -180,11 +177,10 @@ export function setupMoonlightProxy(server: Server, app: import('express').Expre
       delete headers['authorization'];
       delete headers['cookie'];
 
-      const upstreamPath = basePath && url.startsWith(basePath) ? url.slice(basePath.length) : url;
       const proxyReq = http.request({
         host: upstream.host,
         port: upstream.port,
-        path: upstreamPath,
+        path: url,
         method: 'GET',
         headers,
       });

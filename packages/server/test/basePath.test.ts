@@ -10,7 +10,9 @@ import os from 'node:os';
 import path from 'node:path';
 
 const { normalizeBasePath, config } = await import('../src/config.js');
-const { renderIndexHtml } = await import('../src/services/indexHtml.js');
+const { renderIndexHtml, renderManifest } = await import('../src/services/indexHtml.js');
+const { moonlightPathPrefix } = await import('../src/services/moonlightWeb.js');
+const { upstreamPath } = await import('../src/ws/moonlightProxy.js');
 
 describe('normalizeBasePath', () => {
   it("defaults to the root sentinel '/' for unset/empty input (no regression for existing deployments)", () => {
@@ -25,6 +27,44 @@ describe('normalizeBasePath', () => {
     assert.equal(normalizeBasePath('/sys/ftp'), '/sys/ftp');
     assert.equal(normalizeBasePath('/sys/ftp/'), '/sys/ftp');
     assert.equal(normalizeBasePath('sys/ftp/'), '/sys/ftp');
+  });
+
+  it('rejects characters that are unsafe in HTML or Express route patterns', () => {
+    for (const bad of ['/a"b', '/a<b>', '/a:b', '/a*', '/a(b)', '/a b', '/a//b', '/../x', '/./x', '/a?b', '/a#b']) {
+      assert.throws(() => normalizeBasePath(bad), /Invalid BASE_PATH/, bad);
+    }
+  });
+});
+
+describe('moonlight under a prefix', () => {
+  it('moonlight-web is told the full public prefix, and the proxy forwards it unchanged', () => {
+    const prev = config.basePath;
+    try {
+      config.basePath = '/';
+      assert.equal(moonlightPathPrefix(), '/mlw');
+      config.basePath = '/sys/ftp';
+      assert.equal(moonlightPathPrefix(), '/sys/ftp/mlw');
+    } finally {
+      config.basePath = prev;
+    }
+    assert.equal(upstreamPath('/sys/ftp/mlw/api/host?x=1', '/api/host?x=1', '/sys/ftp/mlw'), '/sys/ftp/mlw/api/host?x=1');
+    assert.equal(upstreamPath('/mlw/config.js', '/config.js', '/mlw'), '/mlw/config.js');
+  });
+});
+
+describe('renderManifest', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'gatwy-manifest-test-'));
+  fs.writeFileSync(path.join(dir, 'manifest.webmanifest'), JSON.stringify({
+    name: 'Gatwy', start_url: '/', scope: '/', icons: [{ src: '/favicon.png', sizes: '512x512' }],
+  }));
+  after(() => { fs.rmSync(dir, { recursive: true, force: true }); });
+
+  it('moves start_url, scope and icons under the prefix', () => {
+    const m = JSON.parse(renderManifest(dir, '/sys/ftp')) as { name: string; start_url: string; scope: string; icons: { src: string }[] };
+    assert.equal(m.name, 'Gatwy');
+    assert.equal(m.start_url, '/sys/ftp/');
+    assert.equal(m.scope, '/sys/ftp/');
+    assert.equal(m.icons[0].src, '/sys/ftp/favicon.png');
   });
 });
 
