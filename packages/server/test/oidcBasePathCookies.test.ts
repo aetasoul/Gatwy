@@ -94,7 +94,7 @@ async function callback(state: string, cookie?: string) {
 describe('OIDC + session cookies under a reverse-proxy BASE_PATH prefix', () => {
   it('scopes the OIDC state cookie Path to the prefixed route, not the unprefixed one', async () => {
     const { setCookie } = await startFlow();
-    assert.match(setCookie, new RegExp(`Path=${bp.replace(/\//g, '\\/')}\\/api\\/v1\\/auth\\/oidc(;|$)`));
+    assert.ok(setCookie.split(';').map((a) => a.trim()).includes(`Path=${bp}/api/v1/auth/oidc`), setCookie);
   });
 
   it('completes the flow when the cookie is sent back on the prefixed callback path (no silent drop)', async () => {
@@ -117,8 +117,10 @@ describe('OIDC + session cookies under a reverse-proxy BASE_PATH prefix', () => 
   it('scopes the session cookie Path to BASE_PATH, not Path=/ (would leak to every app on the domain)', async () => {
     const { state } = await startFlow();
     const res = await callback(state, `gatwy_oidc_state=${state}`);
-    const setCookie = res.headers.get('set-cookie') ?? '';
-    assert.match(setCookie, new RegExp(`gatwy_token=.*Path=${bp.replace(/\//g, '\\/')}(;|$)`));
-    assert.doesNotMatch(setCookie, /gatwy_token=[^;]*;[^;]*Path=\/;/);
+    const tokenCookie = res.headers.getSetCookie().find((c) => c.startsWith('gatwy_token='));
+    assert.ok(tokenCookie, 'session cookie is set');
+    const attrs = tokenCookie.split(';').map((a) => a.trim());
+    assert.ok(attrs.includes(`Path=${bp}`), tokenCookie);
+    assert.ok(!attrs.includes('Path=/'), tokenCookie);
   });
 });
