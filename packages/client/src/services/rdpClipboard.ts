@@ -7,6 +7,8 @@
  * poll; local -> remote sync happens from the user's paste event instead.
  */
 
+import { stripHtmlTags } from '../lib/stripHtmlTags';
+
 type ClipboardDataCtor = new () => {
   addText(mimeType: string, text: string): void;
   addBinary(mimeType: string, binary: Uint8Array): void;
@@ -266,7 +268,7 @@ export class RdpClipboardService {
     // If the fragment is a single anchor, prefer the href
     const hrefMatch = html.match(/<a\s[^>]*href="([^"]+)"[^>]*>/i);
     if (hrefMatch) return hrefMatch[1].trim() || null;
-    return html.replace(/<[^>]+>/g, '').trim() || null;
+    return stripHtmlTags(html).trim() || null;
   }
 
   private scheduleMonitor(): void {
