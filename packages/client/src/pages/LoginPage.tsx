@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef, type FormEvent } from 'react';
 import { useAuth } from '../hooks/useAuth';
 import { startAuthentication } from '@simplewebauthn/browser';
+import { BASE_PATH, homePath } from '../lib/basePath';
 
 interface ProvidersConfig {
   local: boolean;
@@ -45,12 +46,12 @@ export function LoginPage() {
 
     const params = new URLSearchParams(window.location.search);
     if (params.has('sso')) {
-      window.history.replaceState({}, '', '/');
+      window.history.replaceState({}, '', homePath(BASE_PATH));
       window.location.reload();
     }
     if (params.has('sso_error')) {
-      setSsoError(decodeURIComponent(params.get('sso_error') ?? 'SSO authentication failed'));
-      window.history.replaceState({}, '', '/');
+      setSsoError(params.get('sso_error') || 'SSO authentication failed');
+      window.history.replaceState({}, '', homePath(BASE_PATH));
     }
   }, []);
 

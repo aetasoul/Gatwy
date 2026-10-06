@@ -16,6 +16,10 @@ export function normalizeBasePath(raw: string | undefined): string {
   if (!p || p === '/') return '/';
   if (!p.startsWith('/')) p = `/${p}`;
   while (p.length > 1 && p.endsWith('/')) p = p.slice(0, -1);
+  // The prefix is injected into HTML and Express route patterns, so only plain path segments are safe.
+  if (!/^(\/[A-Za-z0-9._~-]+)+$/.test(p) || p.split('/').some((s) => s === '.' || s === '..')) {
+    throw new Error(`Invalid BASE_PATH "${raw}": use plain path segments such as /sys/ftp`);
+  }
   return p;
 }
 

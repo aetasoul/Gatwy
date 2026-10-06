@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
-import { routerBasename } from '../src/lib/basePath.js';
+import { homePath, routerBasename } from '../src/lib/basePath.js';
 
 // BrowserRouter's `basename` prop is what makes react-router's own navigation (<Navigate>,
 // <Link>, useNavigate()) honor the reverse-proxy prefix — e.g. the unauthenticated redirect to
@@ -13,5 +13,15 @@ describe('routerBasename', () => {
 
   it("falls back to '/' when there is no prefix (root deployment)", () => {
     assert.equal(routerBasename(''), '/');
+  });
+});
+
+describe('homePath', () => {
+  it('keeps history/location calls under the reverse-proxy prefix', () => {
+    assert.equal(homePath('/sys/ftp'), '/sys/ftp/');
+  });
+
+  it("is '/' at the root", () => {
+    assert.equal(homePath(''), '/');
   });
 });

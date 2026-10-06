@@ -16,3 +16,8 @@ export const BASE_PATH: string = (() => {
 export function routerBasename(basePath: string): string {
   return basePath || '/';
 }
+
+/** The app's root URL for `history`/`location` calls, which bypass react-router's basename. */
+export function homePath(basePath: string): string {
+  return `${basePath}/`;
+}

@@ -38,7 +38,7 @@ import databaseRoutes from './routes/database.js';
 import moonlightRoutes from './routes/moonlight.js';
 import { ipRulesMiddleware, guardUpgradesByIpRules } from './middleware/ipRules.js';
 import { isTrustedProxyAddress } from './services/ip.js';
-import { renderIndexHtml } from './services/indexHtml.js';
+import { renderIndexHtml, renderManifest } from './services/indexHtml.js';
 
 async function main() {
   // Ensure data directories
@@ -172,6 +172,12 @@ async function main() {
   // Serve frontend static files
   const clientDir = config.clientDir;
   if (fs.existsSync(clientDir)) {
+    if (bp) {
+      const manifest = renderManifest(clientDir, bp);
+      app.get(`${bp}/manifest.webmanifest`, (_req, res) => {
+        res.type('application/manifest+json').send(manifest);
+      });
+    }
     app.use(bp || '/', express.static(clientDir, { index: false }));
     const indexHtml = renderIndexHtml(clientDir, bp);
     app.get(`${bp}/{*splat}`, (_req, res) => {
