@@ -2,7 +2,8 @@ import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import { stripHtmlTags } from '../src/lib/stripHtmlTags.js';
 
-const reference = (s: string) => s.replace(/<[^>]+>/g, '');
+// split/join removes the same matches as the previous replace() call.
+const reference = (s: string) => s.split(/<[^>]+>/g).join('');
 
 describe('stripHtmlTags', () => {
   it('removes tags and keeps text', () => {
