@@ -28,6 +28,7 @@ export interface SshCachedSession {
   castFile: Writable | null;
   castStart: number;
   cmdTracker: CommandTracker | null;
+  tornDown: boolean; // set by teardownSession() so it runs only once
 }
 
 const cache = new Map<string, SshCachedSession>();

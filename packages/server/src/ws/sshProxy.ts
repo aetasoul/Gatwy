@@ -59,6 +59,10 @@ function teardownSession(
   sessionDbId: string,
   clientIp: string,
 ): void {
+  // Re-entered by the shell 'close' handler once ssh.end() below runs: tear down only once, or the
+  // disconnect is audited twice and the user's slot is released twice.
+  if (session.tornDown) return;
+  session.tornDown = true;
   if (session.castFile) { try { session.castFile.end(); } catch { /**/ } session.castFile = null; }
   if (session.cmdTracker) { try { session.cmdTracker.flush(); } catch { /**/ } session.cmdTracker = null; }
   session.tunnelServers.forEach((s) => { try { s.close(); } catch { /**/ } });
@@ -157,10 +161,6 @@ export function setupSshProxy(server: https.Server, basePath = ''): void {
     }
 
     // ── New session path ─────────────────────────────────────────────────────
-    // Enforce per-user and global connection limits (H2)
-    const limit = acquireConnection(userId);
-    if (!limit.allowed) { ws.close(4008, limit.reason ?? 'Connection limit'); return; }
-
     const access = wsCanAccess(userId);
     const connRow = queryOne<ConnectionRow>(
       `SELECT * FROM connections WHERE id = ? AND ${access.where}`,
@@ -168,6 +168,14 @@ export function setupSshProxy(server: https.Server, basePath = ''): void {
     );
     const conn = connRow ? applyCredential(connRow, userId) : undefined;
     if (!conn || conn.protocol !== 'ssh') { ws.close(4002, 'Not found or not SSH'); return; }
+
+    // Enforce per-user and global connection limits (H2)
+    const limit = acquireConnection(userId);
+    if (!limit.allowed) { ws.close(4008, limit.reason ?? 'Connection limit'); return; }
+    // From here on the slot belongs to teardownSession() once the session is cached; until then
+    // every failure ends with the browser socket closing, so release it there.
+    let sessionStored = false;
+    ws.once('close', () => { if (!sessionStored) releaseConnection(userId); });
 
     const sessionDbId = uuid();
     const globalRecording = getSetting('session.recording_enabled') === 'true';
@@ -299,8 +307,10 @@ export function setupSshProxy(server: https.Server, basePath = ''): void {
           cols, rows,
           castFile, castStart,
           cmdTracker: doRecord ? new CommandTracker(sessionDbId, castStart) : null,
+          tornDown: false,
         };
         storeSession(clientSessionId, session);
+        sessionStored = true;
         shellStream.setWindow(rows, cols, 0, 0);
 
         shellStream.on('data', (data: Buffer) => {

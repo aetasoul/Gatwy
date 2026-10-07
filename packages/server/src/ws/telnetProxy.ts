@@ -53,6 +53,7 @@ interface TelnetCachedSession {
   rows: number;
   castFile: import('stream').Writable | null;
   castStart: number;
+  tornDown: boolean; // set by teardownSession() so it runs only once
 }
 
 const MAX_BUFFER = 512 * 1024;
@@ -194,6 +195,10 @@ function teardownSession(
   sessionDbId: string,
   clientIp: string,
 ): void {
+  // Re-entered by the socket 'close' handler once socket.destroy() below runs: tear down only
+  // once, or the disconnect is audited twice and the user's slot is released twice.
+  if (session.tornDown) return;
+  session.tornDown = true;
   if (session.castFile) { try { session.castFile.end(); } catch { /**/ } session.castFile = null; }
   try { session.socket.destroy(); } catch { /**/ }
   execute("UPDATE sessions SET ended_at = datetime('now') WHERE id = ?", [sessionDbId]);
@@ -288,10 +293,6 @@ export function setupTelnetProxy(server: https.Server, basePath = ''): void {
     }
 
     // New session
-    // Enforce per-user and global connection limits (H2)
-    const limit = acquireConnection(userId);
-    if (!limit.allowed) { ws.close(4008, limit.reason ?? 'Connection limit'); return; }
-
     const access = wsCanAccess(userId);
     const connRow = queryOne<ConnectionRow>(
       `SELECT * FROM connections WHERE id = ? AND ${access.where}`,
@@ -299,6 +300,14 @@ export function setupTelnetProxy(server: https.Server, basePath = ''): void {
     );
     const conn = connRow ? applyCredential(connRow, userId) : undefined;
     if (!conn || conn.protocol !== 'telnet') { ws.close(4002, 'Not found or not Telnet'); return; }
+
+    // Enforce per-user and global connection limits (H2)
+    const limit = acquireConnection(userId);
+    if (!limit.allowed) { ws.close(4008, limit.reason ?? 'Connection limit'); return; }
+    // From here on the slot belongs to teardownSession() once the session is cached; until then
+    // every failure ends with the browser socket closing, so release it there.
+    let sessionStored = false;
+    ws.once('close', () => { if (!sessionStored) releaseConnection(userId); });
 
     const sessionDbId = uuid();
     const globalRecording = getSetting('session.recording_enabled') === 'true';
@@ -358,8 +367,10 @@ export function setupTelnetProxy(server: https.Server, basePath = ''): void {
         userId, tokenHash, sessionDbId, connectionId,
         cols, rows,
         castFile, castStart,
+        tornDown: false,
       };
       sessions.set(clientSessionId, session);
+      sessionStored = true;
 
       // Send initial NAWS
       socket.write(buildNawsSubneg(cols, rows));
