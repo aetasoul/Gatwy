@@ -92,7 +92,12 @@ async function startFakeSsh(authDelayMs = 0) {
   const srv = new SshServer({ hostKeys: [privateKey] }, (client) => {
     accepted.add(client);
     state.conns++;
-    client.on('authentication', (ctx) => { if (authDelayMs) setTimeout(() => ctx.accept(), authDelayMs); else ctx.accept(); });
+    // ssh2 starts its keepalive interval on 'ready' even for a connection that is already closed,
+    // and nothing clears it: never accept authentication for a client that has left.
+    let gone = false;
+    client.on('authentication', (ctx) => {
+      if (authDelayMs) setTimeout(() => { if (!gone) ctx.accept(); }, authDelayMs); else ctx.accept();
+    });
     client.on('ready', () => client.on('session', (accept) => {
       const session = accept();
       session.on('pty', (a) => a && a());
@@ -104,7 +109,7 @@ async function startFakeSsh(authDelayMs = 0) {
         stream.on('data', (d: Buffer) => stream.write(`echo:${d}`));
       });
     }));
-    client.on('close', () => { state.closed++; accepted.delete(client); });
+    client.on('close', () => { gone = true; state.closed++; accepted.delete(client); });
     client.on('error', () => { /* the proxy may drop the connection abruptly */ });
   });
   const port = await listen(srv as unknown as net.Server);
