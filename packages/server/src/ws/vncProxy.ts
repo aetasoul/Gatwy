@@ -78,13 +78,16 @@ export function setupVncProxy(server: Server, basePath = ''): void {
       ws.once('close', teardown);
       const tcp = net.connect(connPort || 5900, connHost);
 
+      // Registered before the connect completes: a browser that leaves while it is still in
+      // progress must not leave the TCP connection behind.
+      ws.on('close', () => tcp.destroy());
+      ws.on('error', () => tcp.destroy());
+
       tcp.on('connect', () => {
         ws.on('message', (data) => { tcp.write(data as Buffer); });
         tcp.on('data', (data) => { if (ws.readyState === 1) ws.send(data); });
-        ws.on('close', () => tcp.destroy());
         tcp.on('close', () => ws.close());
         tcp.on('error', () => ws.close());
-        ws.on('error', () => tcp.destroy());
       });
 
       tcp.on('error', (err) => {

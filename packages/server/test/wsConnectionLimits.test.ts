@@ -7,6 +7,7 @@
 //    cached, so every failure after acquireConnection() leaked a slot;
 //  - teardownSession() ran twice when the reattach grace expired (ssh.end() re-enters it through
 //    the shell 'close' handler): two disconnect audit events and two releases.
+//  - the upstream connection of a session whose browser left during the connect was never closed.
 // Real proxies, temporary DB, fake upstreams.
 import assert from 'node:assert/strict';
 import { describe, it, before, after, afterEach, mock } from 'node:test';
@@ -32,6 +33,7 @@ const { issueWsTicket } = await import('../src/services/wsTicket.js');
 const { setupSshProxy } = await import('../src/ws/sshProxy.js');
 const { setupTelnetProxy } = await import('../src/ws/telnetProxy.js');
 const { setupRdpProxy } = await import('../src/ws/rdpProxy.js');
+const { setupVncProxy } = await import('../src/ws/vncProxy.js');
 const { getSession } = await import('../src/ws/sshSessionCache.js');
 
 const LIMIT = 2;
@@ -40,6 +42,10 @@ let proxyServer: Server;
 let proxyPort: number;
 let sshUpstream: { port: number; close: () => void };
 let tcpUpstream: { port: number; close: () => void };
+let slowSsh: Awaited<ReturnType<typeof startFakeSsh>>;
+let slowTcp: Awaited<ReturnType<typeof startFakeTcp>>;
+const realConnect = net.connect;
+const realCreateConnection = net.createConnection;
 let deadPort: number;
 const clients: Client[] = [];
 
@@ -58,39 +64,43 @@ function listen(srv: net.Server | http.Server): Promise<number> {
 }
 
 // An SSH server that accepts any authentication and opens a shell that prints READY.
-async function startFakeSsh() {
+async function startFakeSsh(authDelayMs = 0) {
   const { privateKey } = crypto.generateKeyPairSync('rsa', {
     modulusLength: 2048,
     privateKeyEncoding: { type: 'pkcs1', format: 'pem' },
     publicKeyEncoding: { type: 'pkcs1', format: 'pem' },
   });
   const accepted = new Set<{ end: () => void }>();
+  const state = { conns: 0, closed: 0, shells: 0 };
   const srv = new SshServer({ hostKeys: [privateKey] }, (client) => {
     accepted.add(client);
-    client.on('authentication', (ctx) => ctx.accept());
+    state.conns++;
+    client.on('authentication', (ctx) => { if (authDelayMs) setTimeout(() => ctx.accept(), authDelayMs); else ctx.accept(); });
     client.on('ready', () => client.on('session', (accept) => {
       const session = accept();
       session.on('pty', (a) => a && a());
       session.on('window-change', (a) => a && a());
-      session.on('shell', (a) => { a().write('READY\r\n'); });
+      session.on('shell', (a) => { state.shells++; a().write('READY\r\n'); });
     }));
-    client.on('close', () => accepted.delete(client));
+    client.on('close', () => { state.closed++; accepted.delete(client); });
     client.on('error', () => { /* the proxy may drop the connection abruptly */ });
   });
   const port = await listen(srv as unknown as net.Server);
-  return { port, close: () => { accepted.forEach((c) => c.end()); srv.close(); } };
+  return { port, state, close: () => { accepted.forEach((c) => c.end()); srv.close(); } };
 }
 
 // A TCP server that accepts and keeps the connections open (enough for a Telnet session).
 async function startFakeTcp() {
   const sockets = new Set<net.Socket>();
+  const state = { conns: 0, open: 0 };
   const srv = net.createServer((s) => {
     sockets.add(s);
-    s.on('close', () => sockets.delete(s));
+    state.conns++; state.open++;
+    s.on('close', () => { sockets.delete(s); state.open--; });
     s.on('error', () => { /* ignore */ });
   });
   const port = await listen(srv);
-  return { port, close: () => { sockets.forEach((s) => s.destroy()); srv.close(); } };
+  return { port, state, close: () => { sockets.forEach((s) => s.destroy()); srv.close(); } };
 }
 
 function addUser(id: string) {
@@ -130,6 +140,25 @@ async function healthyAttemptConnects(pathAndQuery: string, user: string): Promi
   return isConnected(c);
 }
 
+// Loopback connects complete instantly, so the window in which the browser can leave while the TCP
+// connect is still in progress never opens. Make connects to `slowPort` take 500 ms. A connect that
+// was cancelled in the meantime (socket destroyed) must stay cancelled.
+function patchSlowConnect(slowPort: number) {
+  const delayed = (real: (...a: never[]) => net.Socket) => (...args: unknown[]): net.Socket => {
+    const first = args[0] as number | { port?: number };
+    const port = typeof first === 'object' ? first.port : first;
+    if (port !== slowPort) return (real as (...a: unknown[]) => net.Socket)(...args);
+    const sock = new net.Socket();
+    const cb = args.find((a) => typeof a === 'function') as (() => void) | undefined;
+    if (cb) sock.once('connect', cb);
+    const rest = args.filter((a) => typeof a !== 'function');
+    setTimeout(() => { if (!sock.destroyed) (sock.connect as (...a: unknown[]) => net.Socket)(...rest); }, 500);
+    return sock;
+  };
+  net.connect = delayed(realConnect as never) as typeof net.connect;
+  net.createConnection = delayed(realCreateConnection as never) as typeof net.createConnection;
+}
+
 before(async () => {
   await initDb();
   setSettings({ 'security.max_connections_per_user': String(LIMIT) });
@@ -138,10 +167,14 @@ before(async () => {
   setupSshProxy(proxyServer as never);
   setupTelnetProxy(proxyServer as never);
   setupRdpProxy(proxyServer as never);
+  setupVncProxy(proxyServer as never);
   proxyPort = await listen(proxyServer);
 
   sshUpstream = await startFakeSsh();
   tcpUpstream = await startFakeTcp();
+  slowSsh = await startFakeSsh(1500); // authentication takes 1.5 s
+  slowTcp = await startFakeTcp();
+  patchSlowConnect(slowTcp.port);
   const dead = net.createServer();
   deadPort = await listen(dead);
   await new Promise((r) => dead.close(r));
@@ -158,8 +191,12 @@ afterEach(async () => {
 });
 
 after(() => {
+  net.connect = realConnect;
+  net.createConnection = realCreateConnection;
   sshUpstream.close();
   tcpUpstream.close();
+  slowSsh.close();
+  slowTcp.close();
   proxyServer.close();
   stopAutoSave();
   fs.rmSync(dataDir, { recursive: true, force: true });
@@ -266,5 +303,80 @@ describe('connection limit accounting on the WebSocket proxies', () => {
     assert.ok(isConnected(next), 'a slot should be free after the expiry');
     const overLimit = open(`/ws/ssh?connectionId=ssh-grace&sessionId=${sid()}`, 'u-ssh-grace');
     assert.equal(await overLimit.closed, 4008);
+  });
+
+  it('Telnet: the expiry of the reattach grace tears the session down once', async () => {
+    addUser('u-tel-grace');
+    addConn('tel-grace', 'u-tel-grace', 'telnet', tcpUpstream.port);
+    const live = open(`/ws/telnet?connectionId=tel-grace&sessionId=${sid()}`, 'u-tel-grace');
+    const leaving = open(`/ws/telnet?connectionId=tel-grace&sessionId=${sid()}`, 'u-tel-grace');
+    await until(() => isConnected(live) && isConnected(leaving), 5000);
+    assert.ok(isConnected(live) && isConnected(leaving), 'both sessions should connect');
+
+    // The Telnet session cache is private, so let the event loop settle after the close instead of
+    // polling it: the grace timer is created in the server's 'close' handler, under the mock.
+    mock.timers.enable({ apis: ['setTimeout'] });
+    leaving.ws.close();
+    for (let i = 0; i < 20000 && leaving.code() === null; i++) await new Promise((r) => setImmediate(r));
+    for (let i = 0; i < 200; i++) await new Promise((r) => setImmediate(r));
+    mock.timers.tick(30_000);
+    mock.timers.reset();
+    const disconnectRows = () => queryAll("SELECT 1 FROM audit_log WHERE event_type = 'session.telnet.disconnect'", []);
+    await until(() => disconnectRows().length > 0, 3000);
+    await sleep(500); // the second teardown, if any, comes from the socket 'close' event
+
+    assert.equal(disconnectRows().length, 1, 'one disconnect audit event for the expired session');
+
+    const next = open(`/ws/telnet?connectionId=tel-grace&sessionId=${sid()}`, 'u-tel-grace');
+    await until(() => isConnected(next) || next.code() !== null, 5000);
+    assert.ok(isConnected(next), 'a slot should be free after the expiry');
+    const overLimit = open(`/ws/telnet?connectionId=tel-grace&sessionId=${sid()}`, 'u-tel-grace');
+    assert.equal(await overLimit.closed, 4008);
+  });
+});
+
+describe('upstream connections are not orphaned when the browser leaves mid-connect', () => {
+  it('SSH: the upstream connection is closed when the browser leaves during the handshake', async () => {
+    addUser('u-ssh-orphan');
+    addConn('ssh-orphan', 'u-ssh-orphan', 'ssh', slowSsh.port);
+    const base = { ...slowSsh.state };
+    const c = open(`/ws/ssh?connectionId=ssh-orphan&sessionId=${sid()}`, 'u-ssh-orphan');
+    await until(() => c.ws.readyState === WebSocket.OPEN, 2000);
+    await sleep(300);
+    c.ws.close();
+    await c.closed;
+    // The handshake would complete after 1.5 s: wait past it.
+    await sleep(2500);
+    assert.equal(slowSsh.state.shells - base.shells, 0, 'no shell should have been opened');
+    assert.equal(slowSsh.state.closed - base.closed, slowSsh.state.conns - base.conns,
+      'every upstream connection that was opened has been closed');
+  });
+
+  it('Telnet: the upstream connection is not opened when the browser leaves during the connect', async () => {
+    addUser('u-tel-orphan');
+    addConn('tel-orphan', 'u-tel-orphan', 'telnet', slowTcp.port);
+    const base = { ...slowTcp.state };
+    const c = open(`/ws/telnet?connectionId=tel-orphan&sessionId=${sid()}`, 'u-tel-orphan');
+    await until(() => c.ws.readyState === WebSocket.OPEN, 2000);
+    await sleep(150);
+    c.ws.close();
+    await c.closed;
+    await sleep(1500); // the delayed connect would happen at ~500 ms
+    assert.equal(slowTcp.state.open - base.open, 0, 'no upstream connection should be left open');
+  });
+
+  it('VNC: the upstream connection is not opened when the browser leaves during the connect', async () => {
+    addUser('u-vnc-orphan');
+    addConn('vnc-orphan', 'u-vnc-orphan', 'vnc', slowTcp.port);
+    const base = { ...slowTcp.state };
+    for (let i = 0; i < 5; i++) {
+      const c = open('/ws/vnc/vnc-orphan', 'u-vnc-orphan');
+      await until(() => c.ws.readyState === WebSocket.OPEN, 2000);
+      await sleep(100);
+      c.ws.close();
+      await c.closed;
+    }
+    await sleep(1500);
+    assert.equal(slowTcp.state.open - base.open, 0, 'no upstream connection should be left open');
   });
 });

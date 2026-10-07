@@ -305,9 +305,15 @@ export function setupTelnetProxy(server: https.Server, basePath = ''): void {
     const limit = acquireConnection(userId);
     if (!limit.allowed) { ws.close(4008, limit.reason ?? 'Connection limit'); return; }
     // From here on the slot belongs to teardownSession() once the session is cached; until then
-    // every failure ends with the browser socket closing, so release it there.
+    // every failure ends with the browser socket closing, so release it there. A browser that
+    // leaves while the TCP connect is in progress would otherwise get a session cached for a
+    // socket that is already gone, with no grace timer to ever close it: abort the connect too.
     let sessionStored = false;
-    ws.once('close', () => { if (!sessionStored) releaseConnection(userId); });
+    ws.once('close', () => {
+      if (sessionStored) return;
+      releaseConnection(userId);
+      socket.destroy();
+    });
 
     const sessionDbId = uuid();
     const globalRecording = getSetting('session.recording_enabled') === 'true';
