@@ -413,6 +413,7 @@ export function setupSshProxy(server: https.Server, basePath = ''): void {
           ws.close(4007, 'Auth timeout');
         }
       }, 30000);
+      ws.once('close', () => clearTimeout(authTimeout));
 
       ws.once('message', (authMsg: Buffer | string) => {
         clearTimeout(authTimeout);
