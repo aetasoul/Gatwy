@@ -1,4 +1,6 @@
-// Regression tests for the per-user connection limit on the WebSocket proxies. The slot taken by
+// Regression tests for the session lifecycle on the WebSocket proxies.
+//
+// Connection limit: the slot taken by
 // acquireConnection() must be released exactly once per accepted session, and never for a session
 // that was refused:
 //  - RDP registered its release on 'close' before calling acquireConnection(), so every attempt
@@ -8,6 +10,12 @@
 //  - teardownSession() ran twice when the reattach grace expired (ssh.end() re-enters it through
 //    the shell 'close' handler): two disconnect audit events and two releases.
 //  - the upstream connection of a session whose browser left during the connect was never closed.
+//
+// Session cache identity (SSH/Telnet): the session id comes from the client (?sessionId=) and the
+// cache used to trust it:
+//  - a new session with the id of a cached one overwrote it, and when the old session's grace
+//    period expired it deleted the entry of the new one (a frozen terminal);
+//  - after a reattach the disconnect was audited with the target ':0' (host/port were not kept).
 // Real proxies, temporary DB, fake upstreams.
 import assert from 'node:assert/strict';
 import { describe, it, before, after, afterEach, mock } from 'node:test';
@@ -80,7 +88,12 @@ async function startFakeSsh(authDelayMs = 0) {
       const session = accept();
       session.on('pty', (a) => a && a());
       session.on('window-change', (a) => a && a());
-      session.on('shell', (a) => { state.shells++; a().write('READY\r\n'); });
+      session.on('shell', (a) => {
+        state.shells++;
+        const stream = a();
+        stream.write('READY\r\n');
+        stream.on('data', (d: Buffer) => stream.write(`echo:${d}`));
+      });
     }));
     client.on('close', () => { state.closed++; accepted.delete(client); });
     client.on('error', () => { /* the proxy may drop the connection abruptly */ });
@@ -97,6 +110,8 @@ async function startFakeTcp() {
     sockets.add(s);
     state.conns++; state.open++;
     s.on('close', () => { sockets.delete(s); state.open--; });
+    // Echo what the proxy sends (but not the Telnet option negotiation, which contains 0xFF).
+    s.on('data', (d) => { if (!d.includes(0xff)) s.write(d); });
     s.on('error', () => { /* ignore */ });
   });
   const port = await listen(srv);
@@ -114,8 +129,8 @@ function addConn(id: string, userId: string, protocol: string, port: number, ext
     [id, userId, id, protocol, port, extra ? JSON.stringify(extra) : null]);
 }
 
-function open(pathAndQuery: string, user: string): Client {
-  const ticket = issueWsTicket(user, `token-${user}`);
+function open(pathAndQuery: string, user: string, token = `token-${user}`): Client {
+  const ticket = issueWsTicket(user, token);
   const sep = pathAndQuery.includes('?') ? '&' : '?';
   const ws = new WebSocket(`ws://127.0.0.1:${proxyPort}${pathAndQuery}${sep}ticket=${ticket}`);
   const msgs: string[] = [];
@@ -183,6 +198,7 @@ before(async () => {
 // Closing a cached SSH/Telnet client starts a grace timer that would keep the process alive for
 // minutes: create those timers under the mock and drop them.
 afterEach(async () => {
+  mock.timers.reset(); // a failed test may have left the mock on
   mock.timers.enable({ apis: ['setTimeout'] });
   clients.splice(0).forEach((c) => c.ws.terminate());
   for (let i = 0; i < 50; i++) await new Promise((r) => setImmediate(r));
@@ -380,3 +396,107 @@ describe('upstream connections are not orphaned when the browser leaves mid-conn
     assert.equal(slowTcp.state.open - base.open, 0, 'no upstream connection should be left open');
   });
 });
+
+// The tests below keep the setTimeout mock on for their whole scenario, so they cannot use sleep()
+// or until(): they let the event loop turn instead.
+const turn = () => new Promise<void>((r) => setImmediate(r));
+async function spinUntil(cond: () => boolean, maxTurns = 200_000): Promise<boolean> {
+  for (let i = 0; i < maxTurns && !cond(); i++) await turn();
+  return cond();
+}
+async function settle(turns = 300) { for (let i = 0; i < turns; i++) await turn(); }
+const isReattached = (c: Client) => c.msgs.some((m) => m.includes('Reattached'));
+
+const identityProtocols = [
+  // SSH sends 'Connected' before the session is cached; its first shell output (READY) comes after.
+  { name: 'ssh', wsPath: '/ws/ssh', graceMs: 120_000, upstream: () => sshUpstream.port,
+    up: (c: Client) => c.msgs.some((m) => m.includes('READY')) },
+  { name: 'telnet', wsPath: '/ws/telnet', graceMs: 30_000, upstream: () => tcpUpstream.port,
+    up: (c: Client) => c.msgs.some((m) => m.includes('Connected')) },
+];
+
+for (const proto of identityProtocols) {
+  describe(`${proto.name}: identity of the session in the cache`, () => {
+    // Expire the grace period of a closed session and check that a session that was opened with the
+    // same client-supplied id afterwards is untouched.
+    it('a new session with the id of a cached one is not cut off when the first one expires', async () => {
+      const user = `u-${proto.name}-collide`;
+      addUser(user);
+      addConn(`${proto.name}-collide`, user, proto.name, proto.upstream());
+      const id = `shared-${sid()}`;
+      const url = `${proto.wsPath}?connectionId=${proto.name}-collide&sessionId=${id}`;
+
+      mock.timers.enable({ apis: ['setTimeout'] });
+      // The browser reloads and then logs in again: the old socket is gone, the token is new.
+      const first = open(url, user, 'token-before-login');
+      assert.ok(await spinUntil(() => proto.up(first)), 'first session should connect');
+      first.ws.close();
+      assert.ok(await spinUntil(() => first.code() !== null));
+      await settle();
+      const second = open(url, user, 'token-after-login');
+      assert.ok(await spinUntil(() => proto.up(second)), 'second session should connect');
+
+      mock.timers.tick(proto.graceMs); // the first session's grace period runs out
+      await settle();
+
+      const ping = `ping-${sid()}`;
+      second.ws.send(JSON.stringify({ type: 'data', data: `${ping}\n` }));
+      const answered = await spinUntil(() => second.msgs.some((m) => m.includes(ping)));
+      mock.timers.reset();
+      assert.ok(answered, 'the second terminal must still be wired to its upstream');
+    });
+
+    it('a session of another user with the same id does not replace the first one', async () => {
+      const owner = `u-${proto.name}-owner`;
+      const other = `u-${proto.name}-other`;
+      addUser(owner); addUser(other);
+      addConn(`${proto.name}-owner`, owner, proto.name, proto.upstream());
+      addConn(`${proto.name}-other`, other, proto.name, proto.upstream());
+      const id = `shared-${sid()}`;
+
+      mock.timers.enable({ apis: ['setTimeout'] });
+      const first = open(`${proto.wsPath}?connectionId=${proto.name}-owner&sessionId=${id}`, owner);
+      assert.ok(await spinUntil(() => proto.up(first)), 'owner session should connect');
+      first.ws.close();
+      assert.ok(await spinUntil(() => first.code() !== null));
+      await settle();
+
+      const intruder = open(`${proto.wsPath}?connectionId=${proto.name}-other&sessionId=${id}`, other);
+      assert.ok(await spinUntil(() => proto.up(intruder)), 'the other user gets a session of their own');
+
+      const back = open(`${proto.wsPath}?connectionId=${proto.name}-owner&sessionId=${id}`, owner);
+      const reattached = await spinUntil(() => isReattached(back));
+      mock.timers.reset();
+      assert.ok(reattached, 'the owner must still be able to reattach to their session');
+    });
+
+    it('the disconnect after a reattach is audited with the real target', async () => {
+      const user = `u-${proto.name}-target`;
+      addUser(user);
+      addConn(`${proto.name}-target`, user, proto.name, proto.upstream());
+      const url = `${proto.wsPath}?connectionId=${proto.name}-target&sessionId=${sid()}`;
+      const eventType = `session.${proto.name}.disconnect`;
+
+      mock.timers.enable({ apis: ['setTimeout'] });
+      const first = open(url, user);
+      assert.ok(await spinUntil(() => proto.up(first)), 'session should connect');
+      first.ws.close();
+      assert.ok(await spinUntil(() => first.code() !== null));
+      await settle();
+      const second = open(url, user);
+      assert.ok(await spinUntil(() => isReattached(second)), 'the second socket should reattach');
+      second.ws.close();
+      assert.ok(await spinUntil(() => second.code() !== null));
+      await settle();
+
+      mock.timers.tick(proto.graceMs);
+      const rows = () => queryAll<{ target: string }>(
+        'SELECT target FROM audit_log WHERE event_type = ? AND user_id = ?', [eventType, user]);
+      const audited = await spinUntil(() => rows().length > 0);
+      await settle();
+      mock.timers.reset();
+      assert.ok(audited, 'the expiry should be audited');
+      assert.deepEqual(rows().map((r) => r.target), [`127.0.0.1:${proto.upstream()}`]);
+    });
+  });
+}

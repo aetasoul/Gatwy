@@ -49,6 +49,8 @@ interface TelnetCachedSession {
   tokenHash: string; // H4: bind session to the token that created it
   sessionDbId: string;
   connectionId: string;
+  host: string; // kept for the audit trail of a reattached session
+  port: number;
   cols: number;
   rows: number;
   castFile: import('stream').Writable | null;
@@ -207,7 +209,8 @@ function teardownSession(
     target: `${host}:${port}`,
     details: { connectionId, sessionId: sessionDbId }, ipAddress: clientIp,
   });
-  sessions.delete(clientSessionId);
+  // The id comes from the client and may already belong to another session: only remove our own.
+  if (sessions.get(clientSessionId) === session) sessions.delete(clientSessionId);
   releaseConnection(userId);
 }
 
@@ -262,7 +265,7 @@ export function setupTelnetProxy(server: https.Server, basePath = ''): void {
     const url = new URL(req.url || '', `https://${req.headers.host}`);
     const ticketId = url.searchParams.get('ticket');
     const connectionId = url.searchParams.get('connectionId');
-    const clientSessionId = url.searchParams.get('sessionId') || uuid();
+    let clientSessionId = url.searchParams.get('sessionId') || uuid();
     const clientIp = resolveClientIp(req);
 
     if (!ticketId || !connectionId) { ws.close(4001, 'Missing params'); return; }
@@ -288,9 +291,14 @@ export function setupTelnetProxy(server: https.Server, basePath = ''): void {
       for (const chunk of cached.outputBuffer) {
         if (ws.readyState === WebSocket.OPEN) ws.send(chunk);
       }
-      wireClientWs(clientSessionId, ws, userId, '', 0, connectionId, cached.sessionDbId, clientIp);
+      wireClientWs(clientSessionId, ws, userId, cached.host, cached.port, connectionId, cached.sessionDbId, clientIp);
       return;
     }
+
+    // The id comes from the client. An entry that did not qualify for the reattach above belongs to
+    // another user, connection or login: never replace it (its owner could no longer reattach, and
+    // its grace expiry would take this session's entry with it), take an id of our own instead.
+    if (sessions.has(clientSessionId)) clientSessionId = uuid();
 
     // New session
     const access = wsCanAccess(userId);
@@ -371,6 +379,7 @@ export function setupTelnetProxy(server: https.Server, basePath = ''): void {
         socket, ws, timer: null,
         outputBuffer: [], outputBufferBytes: 0,
         userId, tokenHash, sessionDbId, connectionId,
+        host: conn.host, port: conn.port,
         cols, rows,
         castFile, castStart,
         tornDown: false,
