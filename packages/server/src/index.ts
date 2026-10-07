@@ -98,6 +98,8 @@ async function main() {
   // auth check ran. Each parser now lives on its own route, after that route's auth
   // middleware — see routes/smb.ts, routes/sftp.ts, routes/ftp.ts, routes/sessions.ts
   // (recording/chunk) and routes/backup.ts (import). (GHSA-r6f8-6m52-5jvf)
+  // Before any body parser: a blocked IP must not get its body buffered. (GHSA-r6f8-6m52-5jvf)
+  app.use(`${bp}/api/v1`, ipRulesMiddleware);
   app.use(express.json({ limit: '6mb' })); // allow base64-encoded logos (~4 MB image → ~5.4 MB base64)
   app.use(cookieParser());
 
@@ -127,7 +129,6 @@ async function main() {
   });
 
   // API routes
-  app.use(`${bp}/api/v1`, ipRulesMiddleware);
   app.use(`${bp}/api/v1/auth`, authRoutes);
   app.use(`${bp}/api/v1/connections`, connectionRoutes);
   app.use(`${bp}/api/v1/credentials`, credentialRoutes);
