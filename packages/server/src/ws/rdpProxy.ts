@@ -287,11 +287,13 @@ export function setupRdpProxy(server: https.Server, basePath = ''): void {
     if (!userHasPermission(userId, 'protocols.rdp')) { ws.close(4003, 'Protocol not permitted'); return; }
 
     registerWs(tokenHash, ws);
-    ws.once('close', () => { unregisterWs(tokenHash, ws); releaseConnection(userId); });
+    ws.once('close', () => unregisterWs(tokenHash, ws));
 
     // Enforce per-user and global connection limits (H2)
     const limit = acquireConnection(userId);
     if (!limit.allowed) { ws.close(4008, limit.reason ?? 'Connection limit'); return; }
+    // Only a slot that was actually acquired may be released.
+    ws.once('close', () => releaseConnection(userId));
 
     const access = wsCanAccess(userId);
     const connRow = queryOne<ConnectionRow>(

@@ -49,10 +49,13 @@ interface TelnetCachedSession {
   tokenHash: string; // H4: bind session to the token that created it
   sessionDbId: string;
   connectionId: string;
+  host: string; // kept for the audit trail of a reattached session
+  port: number;
   cols: number;
   rows: number;
   castFile: import('stream').Writable | null;
   castStart: number;
+  tornDown: boolean; // set by teardownSession() so it runs only once
 }
 
 const MAX_BUFFER = 512 * 1024;
@@ -194,6 +197,10 @@ function teardownSession(
   sessionDbId: string,
   clientIp: string,
 ): void {
+  // Re-entered by the socket 'close' handler once socket.destroy() below runs: tear down only
+  // once, or the disconnect is audited twice and the user's slot is released twice.
+  if (session.tornDown) return;
+  session.tornDown = true;
   if (session.castFile) { try { session.castFile.end(); } catch { /**/ } session.castFile = null; }
   try { session.socket.destroy(); } catch { /**/ }
   execute("UPDATE sessions SET ended_at = datetime('now') WHERE id = ?", [sessionDbId]);
@@ -202,7 +209,8 @@ function teardownSession(
     target: `${host}:${port}`,
     details: { connectionId, sessionId: sessionDbId }, ipAddress: clientIp,
   });
-  sessions.delete(clientSessionId);
+  // The id comes from the client and may already belong to another session: only remove our own.
+  if (sessions.get(clientSessionId) === session) sessions.delete(clientSessionId);
   releaseConnection(userId);
 }
 
@@ -257,7 +265,7 @@ export function setupTelnetProxy(server: https.Server, basePath = ''): void {
     const url = new URL(req.url || '', `https://${req.headers.host}`);
     const ticketId = url.searchParams.get('ticket');
     const connectionId = url.searchParams.get('connectionId');
-    const clientSessionId = url.searchParams.get('sessionId') || uuid();
+    let clientSessionId = url.searchParams.get('sessionId') || uuid();
     const clientIp = resolveClientIp(req);
 
     if (!ticketId || !connectionId) { ws.close(4001, 'Missing params'); return; }
@@ -283,15 +291,16 @@ export function setupTelnetProxy(server: https.Server, basePath = ''): void {
       for (const chunk of cached.outputBuffer) {
         if (ws.readyState === WebSocket.OPEN) ws.send(chunk);
       }
-      wireClientWs(clientSessionId, ws, userId, '', 0, connectionId, cached.sessionDbId, clientIp);
+      wireClientWs(clientSessionId, ws, userId, cached.host, cached.port, connectionId, cached.sessionDbId, clientIp);
       return;
     }
 
-    // New session
-    // Enforce per-user and global connection limits (H2)
-    const limit = acquireConnection(userId);
-    if (!limit.allowed) { ws.close(4008, limit.reason ?? 'Connection limit'); return; }
+    // The id comes from the client. An entry that did not qualify for the reattach above belongs to
+    // another user, connection or login: never replace it (its owner could no longer reattach, and
+    // its grace expiry would take this session's entry with it), take an id of our own instead.
+    if (sessions.has(clientSessionId)) clientSessionId = uuid();
 
+    // New session
     const access = wsCanAccess(userId);
     const connRow = queryOne<ConnectionRow>(
       `SELECT * FROM connections WHERE id = ? AND ${access.where}`,
@@ -299,6 +308,20 @@ export function setupTelnetProxy(server: https.Server, basePath = ''): void {
     );
     const conn = connRow ? applyCredential(connRow, userId) : undefined;
     if (!conn || conn.protocol !== 'telnet') { ws.close(4002, 'Not found or not Telnet'); return; }
+
+    // Enforce per-user and global connection limits (H2)
+    const limit = acquireConnection(userId);
+    if (!limit.allowed) { ws.close(4008, limit.reason ?? 'Connection limit'); return; }
+    // From here on the slot belongs to teardownSession() once the session is cached; until then
+    // every failure ends with the browser socket closing, so release it there. A browser that
+    // leaves while the TCP connect is in progress would otherwise get a session cached for a
+    // socket that is already gone, with no grace timer to ever close it: abort the connect too.
+    let sessionStored = false;
+    ws.once('close', () => {
+      if (sessionStored) return;
+      releaseConnection(userId);
+      socket.destroy();
+    });
 
     const sessionDbId = uuid();
     const globalRecording = getSetting('session.recording_enabled') === 'true';
@@ -356,10 +379,13 @@ export function setupTelnetProxy(server: https.Server, basePath = ''): void {
         socket, ws, timer: null,
         outputBuffer: [], outputBufferBytes: 0,
         userId, tokenHash, sessionDbId, connectionId,
+        host: conn.host, port: conn.port,
         cols, rows,
         castFile, castStart,
+        tornDown: false,
       };
       sessions.set(clientSessionId, session);
+      sessionStored = true;
 
       // Send initial NAWS
       socket.write(buildNawsSubneg(cols, rows));
