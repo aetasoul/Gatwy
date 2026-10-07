@@ -9,6 +9,7 @@ import { applyCredential } from '../services/credentials.js';
 import { logAudit } from '../services/audit.js';
 import { logFileSessionEvent } from '../services/fileSession.js';
 import { resolveClientIp } from '../services/ip.js';
+import { connectionAccessGuard } from '../middleware/preBodyGuards.js';
 import { connectionAccessWhere } from '../services/permissions.js';
 
 /**
@@ -154,8 +155,8 @@ router.get('/:connectionId/download', async (req: Request, res: Response) => {
 
 // POST /:connectionId/upload — upload a file (body is raw buffer / req is readable)
 // SECURITY: express.raw() here (not at the app level) so the body is only read after
-// router.use(authRequired)/requirePermission above have run. (GHSA-r6f8-6m52-5jvf)
-router.post('/:connectionId/upload', express.raw({ limit: '100mb', type: '*/*' }), async (req: Request, res: Response) => {
+// router.use(authRequired)/requirePermission and connectionAccessGuard have run. (GHSA-r6f8-6m52-5jvf)
+router.post('/:connectionId/upload', connectionAccessGuard('ftp'), express.raw({ limit: '100mb', type: '*/*' }), async (req: Request, res: Response) => {
   const userId = req.user!.userId;
   const conn = getConn(req.params.connectionId as string, userId, req.user!.role);
   if (!conn) { res.status(404).json({ error: 'Connection not found' }); return; }
