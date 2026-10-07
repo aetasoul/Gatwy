@@ -518,6 +518,7 @@ router.post('/:connectionId/export', async (req: Request, res: Response) => {
     const sessionId = getUserSessions(userId).get(connectionId);
     if (sessionId) {
       recordDbEvent(sessionId, fmt === 'json' ? 'export_json' : 'export_csv', 'export', {
+        queryPreview: queryText.slice(0, 200),
         rowCount: rows.length,
         format: fmt,
       });
