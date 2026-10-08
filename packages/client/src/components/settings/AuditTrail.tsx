@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, useCallback } from 'react';
 import { useAuth } from '../../hooks/useAuth';
 import { useTimezone } from '../../hooks/useTimezone';
 import { formatDate as formatDateTz } from '../../utils/formatDate';
+import { neutralizeCsvFormula } from '../../lib/csv';
 import { DateTimePicker } from '../DateTimePicker';
 
 interface AuditEntry {
@@ -331,7 +332,7 @@ export function AuditTrail() {
           headers.map((h) => {
             const key = h as keyof AuditEntry;
             const val = h === 'details' ? JSON.stringify(r[key]) : String(r[key] ?? '');
-            return `"${val.replace(/"/g, '""')}"`;
+            return `"${neutralizeCsvFormula(val).replace(/"/g, '""')}"`;
           }).join(',')
         ),
       ];
