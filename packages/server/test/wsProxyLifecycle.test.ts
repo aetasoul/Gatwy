@@ -447,6 +447,7 @@ describe('an administrator ending a live session', () => {
     const c = open('/ws/rdp-raw?connectionId=rdp-end', 'u-rdp-end');
     await until(() => !!live('rdp-end'), 5000);
     assert.ok(live('rdp-end'));
+    assert.equal(live('rdp-end')!.target, `127.0.0.1:${tcpUpstream.port}`, 'the RDP session records its host:port for the in-use check');
 
     assert.equal(endActiveSession(live('rdp-end')!.id), true);
     assert.equal(await c.closed, ADMIN_CODE);

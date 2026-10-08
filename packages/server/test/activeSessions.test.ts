@@ -8,6 +8,8 @@ import {
   listActiveSessions,
   getActiveSession,
   endActiveSession,
+  targetKey,
+  isTargetInUseByOthers,
 } from '../src/ws/activeSessions.js';
 
 const base = {
@@ -71,6 +73,29 @@ describe('activeSessions registry', () => {
 
   it('endActiveSession returns false for an unknown id', () => {
     assert.equal(endActiveSession('nope'), false);
+  });
+
+  it('targetKey ignores host case and surrounding spaces', () => {
+    assert.equal(targetKey('  Win-Host.LAN ', 3389), 'win-host.lan:3389');
+  });
+
+  it('isTargetInUseByOthers looks at other users only, on the same protocol, host and port', () => {
+    addActiveSession({ ...base, id: 'mine', userId: 'me', protocol: 'rdp', target: targetKey('h', 3389) });
+    addActiveSession({ ...base, id: 'theirs-ssh', userId: 'u2', protocol: 'ssh', target: targetKey('h', 3389) });
+    addActiveSession({ ...base, id: 'theirs-port', userId: 'u2', protocol: 'rdp', target: targetKey('h', 3390) });
+    assert.equal(isTargetInUseByOthers('rdp', targetKey('h', 3389), 'me'), false);
+    addActiveSession({ ...base, id: 'theirs', userId: 'u2', protocol: 'rdp', target: targetKey('H', 3389) });
+    assert.equal(isTargetInUseByOthers('rdp', targetKey('h', 3389), 'me'), true);
+    assert.equal(isTargetInUseByOthers('rdp', targetKey('h', 3389), 'u2'), true, 'the other user sees mine');
+    removeActiveSession('theirs');
+    assert.equal(isTargetInUseByOthers('rdp', targetKey('h', 3389), 'me'), false);
+  });
+
+  it('a session without a target never matches', () => {
+    addActiveSession({ ...base, id: 'no-target', userId: 'u2', protocol: 'rdp' });
+    assert.equal(isTargetInUseByOthers('rdp', targetKey('h', 3389), 'me'), false);
+    assert.equal(isTargetInUseByOthers('rdp', '', 'me'), false);
+    assert.equal(isTargetInUseByOthers('rdp', 'undefined', 'me'), false);
   });
 
 });
