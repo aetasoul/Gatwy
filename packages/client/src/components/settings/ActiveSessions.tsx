@@ -110,7 +110,7 @@ export function ActiveSessions() {
                       ) : (
                         <span
                           className="px-1.5 py-0.5 rounded text-xs bg-surface-hover text-text-secondary border border-border"
-                          title="The browser disconnected; the session stays open for 2 minutes waiting for a reattach"
+                          title="The browser disconnected. The session stays open for a short time waiting for a reattach"
                         >
                           Reconnecting
                         </span>
