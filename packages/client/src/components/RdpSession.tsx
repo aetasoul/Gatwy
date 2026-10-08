@@ -62,6 +62,13 @@ export function RdpSession({ tab, onStatusChange, onClose }: RdpSessionProps) {
   const [disconnected, setDisconnected] = useState(false);
   const [disconnectMessage, setDisconnectMessage] = useState('');
   const [reconnectCount, setReconnectCount] = useState(0);
+  // Heads-up shown before connecting when another user is already on the same host. The effect below
+  // waits on the promise behind it, so the WebSocket is only opened once the user chooses to go on.
+  const [inUsePrompt, setInUsePrompt] = useState(false);
+  const inUseResolveRef = useRef<((proceed: boolean) => void) | null>(null);
+  // Set once the user has chosen "Connect anyway", so the automatic retries below (remote desktop handoff,
+  // compatibility mode) do not ask again. Only the manual Reconnect button clears it.
+  const inUseConfirmedRef = useRef(false);
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [panelOpen, setPanelOpen] = useState(false);
   const [fileTransferOpen, setFileTransferOpen] = useState(false);
@@ -138,6 +145,7 @@ export function RdpSession({ tab, onStatusChange, onClose }: RdpSessionProps) {
   // ── Reconnect handler ──────────────────────────────────────────────────────
   const handleReconnect = useCallback(() => {
     disableDisplayControlRef.current = false;
+    inUseConfirmedRef.current = false;
     setDisconnected(false);
     setDisconnectMessage('');
     setStatus('Initializing...');
@@ -163,6 +171,21 @@ export function RdpSession({ tab, onStatusChange, onClose }: RdpSessionProps) {
       onStatusChange(tab.id, 'disconnected');
     };
 
+    // Advisory only: if the check fails for any reason the connection goes ahead.
+    const hostInUseByOthers = async (): Promise<boolean> => {
+      try {
+        const res = await fetch(`/api/v1/sessions/rdp-in-use?connectionId=${encodeURIComponent(tab.connectionId)}`, {
+          credentials: 'include',
+          // A slow answer must not hold the connection back: the catch below treats it as "not in use".
+          signal: AbortSignal.timeout(3000),
+        });
+        if (!res.ok) return false;
+        return ((await res.json()) as { inUse?: boolean }).inUse === true;
+      } catch {
+        return false;
+      }
+    };
+
     const run = async () => {
       if (!containerRef.current) return;
 
@@ -170,6 +193,21 @@ export function RdpSession({ tab, onStatusChange, onClose }: RdpSessionProps) {
         setStatus('Loading RDP module...');
         await initRdp();
         if (cancelled) return;
+
+        setStatus('Checking the host...');
+        if (!inUseConfirmedRef.current && await hostInUseByOthers()) {
+          if (cancelled) return;
+          setStatus('Waiting for confirmation...');
+          const proceed = await new Promise<boolean>((resolve) => {
+            inUseResolveRef.current = resolve;
+            setInUsePrompt(true);
+          });
+          inUseResolveRef.current = null;
+          setInUsePrompt(false);
+          if (cancelled) return;
+          if (!proceed) { onClose(tab.id); return; }
+          inUseConfirmedRef.current = true;
+        }
 
         setStatus('Fetching connection info...');
         const sessionRes = await fetch(`/api/v1/connections/${tab.connectionId}/session`, {
@@ -818,6 +856,7 @@ export function RdpSession({ tab, onStatusChange, onClose }: RdpSessionProps) {
 
     return () => {
       cancelled = true;
+      inUseResolveRef.current?.(false); // a pending heads-up must not keep the effect waiting
       window.removeEventListener('gatwy:unauthorized', onRevoked);
       resizeObserver?.disconnect();
       canvasStyleGuard?.disconnect();
@@ -879,6 +918,37 @@ export function RdpSession({ tab, onStatusChange, onClose }: RdpSessionProps) {
 
       {/* Mobile soft-keyboard FAB — touch devices only */}
       <RdpMobileKeyboard connected={status === 'Connected'} />
+
+      {/* Heads-up: another user is already connected to this host */}
+      {inUsePrompt && (
+        <div className="absolute inset-0 bg-black/70 backdrop-blur-xs flex items-center justify-center z-20">
+          <div className="bg-surface border border-border rounded-xl p-6 shadow-2xl flex flex-col items-center gap-4 w-80 max-w-[calc(100%-1.5rem)]">
+            <div className="w-12 h-12 rounded-full bg-amber-500/15 flex items-center justify-center">
+              <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-amber-400">
+                <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z" />
+                <line x1="12" y1="9" x2="12" y2="13" />
+                <circle cx="12" cy="17" r="0.5" fill="currentColor" />
+              </svg>
+            </div>
+            <div className="text-center">
+              <h3 className="text-text-primary font-semibold">Host already in use</h3>
+              <p className="text-text-secondary text-xs mt-1 break-words">
+                Another user is already connected to this host. Connecting may disconnect them.
+              </p>
+            </div>
+            <div className="flex flex-col sm:flex-row gap-3 w-full">
+              <button onClick={() => inUseResolveRef.current?.(false)}
+                className="flex-1 py-2 px-3 text-sm border border-border rounded-lg hover:bg-surface-hover text-text-secondary transition-colors">
+                Cancel
+              </button>
+              <button onClick={() => inUseResolveRef.current?.(true)}
+                className="flex-1 py-2 px-3 text-sm bg-accent text-white rounded-lg hover:bg-accent-hover font-medium transition-colors">
+                Connect anyway
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Disconnect overlay */}
       <DisconnectOverlay

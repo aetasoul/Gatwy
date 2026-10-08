@@ -10,7 +10,7 @@ import { config } from '../config.js';
 import { decryptRecording, encryptRecordingFileInPlace, openRdpRecordingFile, type RdpRecordingWriter } from '../services/encryption.js';
 import { resolveClientIp } from '../services/ip.js';
 import { connectionAccessWhere } from '../services/permissions.js';
-import { listActiveSessions, getActiveSession, endActiveSession } from '../ws/activeSessions.js';
+import { listActiveSessions, getActiveSession, endActiveSession, isTargetInUseByOthers, targetKey } from '../ws/activeSessions.js';
 
 const router = Router();
 router.use(authRequired);
@@ -55,6 +55,20 @@ router.get('/active', requirePermission('sessions.view_active'), (_req: Request,
       durationMs: now - s.startedAt,
     })),
   });
+});
+
+// GET /rdp-in-use?connectionId=... — is someone else already connected to this RDP host? Advisory only:
+// it answers a yes or no for a connection the caller can open, and never says who or how many.
+router.get('/rdp-in-use', requirePermission('protocols.rdp'), (req: Request, res: Response) => {
+  const connectionId = typeof req.query.connectionId === 'string' ? req.query.connectionId : '';
+  if (!connectionId) { res.status(400).json({ error: 'connectionId required' }); return; }
+  const access = connectionAccessWhere('connections', req.user!.userId, req.user!.role);
+  const conn = queryOne<{ host: string; port: number }>(
+    `SELECT host, port FROM connections WHERE id = ? AND protocol = 'rdp' AND ${access.where}`,
+    [connectionId, ...access.params],
+  );
+  if (!conn) { res.status(404).json({ error: 'Connection not found' }); return; }
+  res.json({ inUse: isTargetInUseByOthers('rdp', targetKey(conn.host, conn.port), req.user!.userId) });
 });
 
 // POST /active/:id/disconnect — end a live session (sessions.disconnect, admin-only by default).
