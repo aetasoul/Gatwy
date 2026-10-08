@@ -5,9 +5,12 @@
  * tab or carriage return as a formula, even inside a quoted CSV field. Values such as a remote
  * file name or a database column are attacker-controlled, so prefix them with a single quote,
  * which spreadsheets treat as "this is text". Apply it to strings only: a numeric `-5` is data.
+ * Numeric strings (pg/mysql return DECIMAL and bigint as strings) are data too and stay as is.
  */
+const PLAIN_NUMBER = /^[+-]?(\d+\.?\d*|\.\d+)([eE][+-]?\d+)?$/;
+
 export function neutralizeCsvFormula(value: string): string {
-  return /^[=+\-@\t\r]/.test(value) ? `'${value}` : value;
+  return /^[=+\-@\t\r]/.test(value) && !PLAIN_NUMBER.test(value) ? `'${value}` : value;
 }
 
 function csvCell(v: unknown): string {
