@@ -5,6 +5,7 @@ import { logAudit } from '../services/audit.js';
 import { roleHasPermission, connectionAccessWhere } from '../services/permissions.js';
 import { getPool, releasePool } from '../services/dbPool.js';
 import { startDbSession, endDbSession, recordDbEvent } from '../services/dbSession.js';
+import { rowsToCsv } from '../services/csv.js';
 import { v4 as uuid } from 'uuid';
 
 const router = Router();
@@ -517,6 +518,7 @@ router.post('/:connectionId/export', async (req: Request, res: Response) => {
     const sessionId = getUserSessions(userId).get(connectionId);
     if (sessionId) {
       recordDbEvent(sessionId, fmt === 'json' ? 'export_json' : 'export_csv', 'export', {
+        queryPreview: queryText.slice(0, 200),
         rowCount: rows.length,
         format: fmt,
       });
@@ -532,16 +534,9 @@ router.post('/:connectionId/export', async (req: Request, res: Response) => {
       res.setHeader('Content-Disposition', `attachment; filename="export.json"`);
       res.send(JSON.stringify(jsonRows, null, 2));
     } else {
-      const escape = (v: unknown): string => {
-        if (v === null || v === undefined) return '';
-        const s = v instanceof Date ? v.toISOString() : typeof v === 'object' ? JSON.stringify(v) : String(v);
-        if (s.includes(',') || s.includes('"') || s.includes('\n') || s.includes('\r')) return `"${s.replace(/"/g, '""')}"`;
-        return s;
-      };
-      const lines = [columns.join(','), ...rows.map(r => r.map(escape).join(','))];
       res.setHeader('Content-Type', 'text/csv');
       res.setHeader('Content-Disposition', `attachment; filename="export.csv"`);
-      res.send(lines.join('\n'));
+      res.send(rowsToCsv(columns, rows));
     }
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);

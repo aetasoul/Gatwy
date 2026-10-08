@@ -1,6 +1,7 @@
 import { Router, type Request, type Response } from 'express';
 import { authRequired, userCan } from '../middleware/auth.js';
 import { queryAll, queryOne } from '../db/helpers.js';
+import { neutralizeCsvFormula } from '../services/csv.js';
 
 const router = Router();
 router.use(authRequired);
@@ -107,19 +108,20 @@ router.get('/:id/export', (req: Request, res: Response) => {
 
   if (format === 'csv') {
     const header = 'session_id,connection,username,protocol,session_started,session_ended,timestamp,action,path,detail\n';
+    const quote = (v: string) => `"${neutralizeCsvFormula(v).replace(/"/g, '""')}"`;
     const rows = events.map((e) => {
       const detail = e.detail_json ?? '';
       return [
         sessionId,
-        `"${(session.connection_name ?? '').replace(/"/g, '""')}"`,
-        `"${(session.username ?? '').replace(/"/g, '""')}"`,
+        quote(session.connection_name ?? ''),
+        quote(session.username ?? ''),
         session.protocol,
         session.started_at,
         session.ended_at ?? '',
         e.timestamp,
         e.action,
-        `"${e.path.replace(/"/g, '""')}"`,
-        `"${detail.replace(/"/g, '""')}"`,
+        quote(e.path),
+        quote(detail),
       ].join(',');
     }).join('\n');
     res.setHeader('Content-Type', 'text/csv');
