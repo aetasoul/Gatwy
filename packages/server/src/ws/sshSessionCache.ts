@@ -23,11 +23,14 @@ export interface SshCachedSession {
   tokenHash: string; // H4: bind session to the token that created it
   sessionDbId: string;
   connectionId: string;
+  host: string; // kept for the audit trail of a reattached session
+  port: number;
   cols: number;
   rows: number;
   castFile: Writable | null;
   castStart: number;
   cmdTracker: CommandTracker | null;
+  tornDown: boolean; // set by teardownSession() so it runs only once
 }
 
 const cache = new Map<string, SshCachedSession>();
@@ -61,7 +64,8 @@ export function startGrace(clientSessionId: string, cleanupFn: () => void): void
   if (session.timer) clearTimeout(session.timer);
   session.timer = setTimeout(() => {
     try { cleanupFn(); } catch { /**/ }
-    cache.delete(clientSessionId);
+    // The id may have been given to another session in the meantime: only remove our own entry.
+    if (cache.get(clientSessionId) === session) cache.delete(clientSessionId);
   }, GRACE_MS);
 }
 

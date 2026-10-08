@@ -59,6 +59,10 @@ function teardownSession(
   sessionDbId: string,
   clientIp: string,
 ): void {
+  // Re-entered by the shell 'close' handler once ssh.end() below runs: tear down only once, or the
+  // disconnect is audited twice and the user's slot is released twice.
+  if (session.tornDown) return;
+  session.tornDown = true;
   if (session.castFile) { try { session.castFile.end(); } catch { /**/ } session.castFile = null; }
   if (session.cmdTracker) { try { session.cmdTracker.flush(); } catch { /**/ } session.cmdTracker = null; }
   session.tunnelServers.forEach((s) => { try { s.close(); } catch { /**/ } });
@@ -69,7 +73,8 @@ function teardownSession(
     target: `${host}:${port}`,
     details: { connectionId, sessionId: sessionDbId }, ipAddress: clientIp,
   });
-  removeSession(clientSessionId);
+  // The id comes from the client and may already belong to another session: only remove our own.
+  if (getSession(clientSessionId) === session) removeSession(clientSessionId);
   releaseConnection(userId);
 }
 
@@ -125,7 +130,7 @@ export function setupSshProxy(server: https.Server, basePath = ''): void {
     const url = new URL(req.url || '', `https://${req.headers.host}`);
     const ticketId = url.searchParams.get('ticket');
     const connectionId = url.searchParams.get('connectionId');
-    const clientSessionId = url.searchParams.get('sessionId') || uuid();
+    let clientSessionId = url.searchParams.get('sessionId') || uuid();
     const clientIp = resolveClientIp(req);
 
     if (!ticketId || !connectionId) { ws.close(4001, 'Missing params'); return; }
@@ -152,15 +157,16 @@ export function setupSshProxy(server: https.Server, basePath = ''): void {
       for (const chunk of cached.outputBuffer) {
         if (ws.readyState === WebSocket.OPEN) ws.send(chunk);
       }
-      wireClientWs(clientSessionId, ws, userId, '', 0, connectionId, cached.sessionDbId, clientIp);
+      wireClientWs(clientSessionId, ws, userId, cached.host, cached.port, connectionId, cached.sessionDbId, clientIp);
       return;
     }
 
-    // ── New session path ─────────────────────────────────────────────────────
-    // Enforce per-user and global connection limits (H2)
-    const limit = acquireConnection(userId);
-    if (!limit.allowed) { ws.close(4008, limit.reason ?? 'Connection limit'); return; }
+    // The id comes from the client. An entry that did not qualify for the reattach above belongs to
+    // another user, connection or login: never replace it (its owner could no longer reattach, and
+    // its grace expiry would take this session's entry with it), take an id of our own instead.
+    if (getSession(clientSessionId)) clientSessionId = uuid();
 
+    // ── New session path ─────────────────────────────────────────────────────
     const access = wsCanAccess(userId);
     const connRow = queryOne<ConnectionRow>(
       `SELECT * FROM connections WHERE id = ? AND ${access.where}`,
@@ -168,6 +174,20 @@ export function setupSshProxy(server: https.Server, basePath = ''): void {
     );
     const conn = connRow ? applyCredential(connRow, userId) : undefined;
     if (!conn || conn.protocol !== 'ssh') { ws.close(4002, 'Not found or not SSH'); return; }
+
+    // Enforce per-user and global connection limits (H2)
+    const limit = acquireConnection(userId);
+    if (!limit.allowed) { ws.close(4008, limit.reason ?? 'Connection limit'); return; }
+    // From here on the slot belongs to teardownSession() once the session is cached; until then
+    // every failure ends with the browser socket closing, so release it there. A browser that
+    // leaves mid-handshake would otherwise get a session cached for a socket that is already gone,
+    // with no grace timer to ever close it: abort the connection attempt as well.
+    let sessionStored = false;
+    ws.once('close', () => {
+      if (sessionStored) return;
+      releaseConnection(userId);
+      try { ssh.end(); } catch { /**/ }
+    });
 
     const sessionDbId = uuid();
     const globalRecording = getSetting('session.recording_enabled') === 'true';
@@ -296,11 +316,14 @@ export function setupSshProxy(server: https.Server, basePath = ''): void {
           outputBuffer: [], outputBufferBytes: 0,
           ws, timer: null,
           userId, tokenHash, sessionDbId, connectionId,
+          host: conn.host, port: conn.port,
           cols, rows,
           castFile, castStart,
           cmdTracker: doRecord ? new CommandTracker(sessionDbId, castStart) : null,
+          tornDown: false,
         };
         storeSession(clientSessionId, session);
+        sessionStored = true;
         shellStream.setWindow(rows, cols, 0, 0);
 
         shellStream.on('data', (data: Buffer) => {
