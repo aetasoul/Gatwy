@@ -60,6 +60,15 @@ const clients: Client[] = [];
 interface Client { ws: WebSocket; msgs: string[]; closed: Promise<number>; code: () => number | null }
 
 const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
+// Captured before any test mocks setTimeout: waits in real time while the mock is on.
+const realSetTimeout = globalThis.setTimeout;
+const realSleep = (ms: number) => new Promise<void>((r) => realSetTimeout(r, ms));
+
+// Disconnect audit rows of one connection: other tests' sessions must not count.
+const disconnectRows = (eventType: string, connectionId: string) =>
+  queryAll<{ id: number; target: string; details_json: string }>(
+    'SELECT rowid AS id, target, details_json FROM audit_log WHERE event_type = ? AND details_json LIKE ?',
+    [eventType, `%"connectionId":"${connectionId}"%`]);
 
 async function until(cond: () => boolean, ms: number): Promise<boolean> {
   const end = Date.now() + ms;
@@ -83,7 +92,12 @@ async function startFakeSsh(authDelayMs = 0) {
   const srv = new SshServer({ hostKeys: [privateKey] }, (client) => {
     accepted.add(client);
     state.conns++;
-    client.on('authentication', (ctx) => { if (authDelayMs) setTimeout(() => ctx.accept(), authDelayMs); else ctx.accept(); });
+    // ssh2 starts its keepalive interval on 'ready' even for a connection that is already closed,
+    // and nothing clears it: never accept authentication for a client that has left.
+    let gone = false;
+    client.on('authentication', (ctx) => {
+      if (authDelayMs) setTimeout(() => { if (!gone) ctx.accept(); }, authDelayMs); else ctx.accept();
+    });
     client.on('ready', () => client.on('session', (accept) => {
       const session = accept();
       session.on('pty', (a) => a && a());
@@ -95,7 +109,7 @@ async function startFakeSsh(authDelayMs = 0) {
         stream.on('data', (d: Buffer) => stream.write(`echo:${d}`));
       });
     }));
-    client.on('close', () => { state.closed++; accepted.delete(client); });
+    client.on('close', () => { gone = true; state.closed++; accepted.delete(client); });
     client.on('error', () => { /* the proxy may drop the connection abruptly */ });
   });
   const port = await listen(srv as unknown as net.Server);
@@ -201,7 +215,7 @@ afterEach(async () => {
   mock.timers.reset(); // a failed test may have left the mock on
   mock.timers.enable({ apis: ['setTimeout'] });
   clients.splice(0).forEach((c) => c.ws.terminate());
-  for (let i = 0; i < 50; i++) await new Promise((r) => setImmediate(r));
+  await realSleep(150);
   mock.timers.reset();
   await sleep(100);
 });
@@ -294,11 +308,13 @@ describe('connection limit accounting on the WebSocket proxies', () => {
   it('SSH: the expiry of the reattach grace tears the session down once', async () => {
     addUser('u-ssh-grace');
     addConn('ssh-grace', 'u-ssh-grace', 'ssh', sshUpstream.port);
-    const live = open(`/ws/ssh?connectionId=ssh-grace&sessionId=${sid()}`, 'u-ssh-grace');
+    const live = open(`/ws/ssh?connectionId=ssh-grace&sessionId=live-${sid()}`, 'u-ssh-grace');
     const leaving = open(`/ws/ssh?connectionId=ssh-grace&sessionId=leaving-${sid()}`, 'u-ssh-grace');
+    const liveId = new URL(live.ws.url).searchParams.get('sessionId')!;
     const leavingId = new URL(leaving.ws.url).searchParams.get('sessionId')!;
-    await until(() => isConnected(live) && isConnected(leaving), 5000);
-    assert.ok(isConnected(live) && isConnected(leaving), 'both sessions should connect');
+    // 'Connected' is sent before the shell opens and the session is cached: wait for the cache.
+    await until(() => !!getSession(liveId) && !!getSession(leavingId), 5000);
+    assert.ok(getSession(liveId) && getSession(leavingId), 'both sessions should connect');
 
     // Close one client and let its grace period run out without waiting two minutes.
     mock.timers.enable({ apis: ['setTimeout'] });
@@ -310,8 +326,9 @@ describe('connection limit accounting on the WebSocket proxies', () => {
     await until(() => getSession(leavingId) === undefined, 3000);
     await sleep(500); // the second teardown, if any, comes from the shell 'close' event
 
-    const disconnects = queryAll<{ id: string }>("SELECT rowid AS id FROM audit_log WHERE event_type = 'session.ssh.disconnect'", []);
-    assert.equal(disconnects.length, 1, 'one disconnect audit event for the expired session');
+    const disconnects = disconnectRows('session.ssh.disconnect', 'ssh-grace');
+    assert.equal(disconnects.length, 1, `one disconnect audit event for the expired session: ${JSON.stringify(disconnects)}`);
+    assert.ok(getSession(liveId), 'the live session must be untouched');
 
     // One live session plus one expired: exactly one slot is free again.
     const next = open(`/ws/ssh?connectionId=ssh-grace&sessionId=${sid()}`, 'u-ssh-grace');
@@ -337,11 +354,12 @@ describe('connection limit accounting on the WebSocket proxies', () => {
     for (let i = 0; i < 200; i++) await new Promise((r) => setImmediate(r));
     mock.timers.tick(30_000);
     mock.timers.reset();
-    const disconnectRows = () => queryAll("SELECT 1 FROM audit_log WHERE event_type = 'session.telnet.disconnect'", []);
-    await until(() => disconnectRows().length > 0, 3000);
+    const telnetDisconnects = () => disconnectRows('session.telnet.disconnect', 'tel-grace');
+    await until(() => telnetDisconnects().length > 0, 3000);
     await sleep(500); // the second teardown, if any, comes from the socket 'close' event
 
-    assert.equal(disconnectRows().length, 1, 'one disconnect audit event for the expired session');
+    assert.equal(telnetDisconnects().length, 1,
+      `one disconnect audit event for the expired session: ${JSON.stringify(telnetDisconnects())}`);
 
     const next = open(`/ws/telnet?connectionId=tel-grace&sessionId=${sid()}`, 'u-tel-grace');
     await until(() => isConnected(next) || next.code() !== null, 5000);
