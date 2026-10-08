@@ -173,4 +173,20 @@ describe('a client cannot plant another user\'s mlHostId through the connection 
     assert.equal(extra.mlHostId, OWN_HOST);
     assert.equal(extra.fps, 90);
   });
+  it('PUT /:id cannot revive an mlHostId planted on a non-moonlight row by switching it to moonlight', async () => {
+    for (const [id, body] of [
+      ['conn-attacker-ssh-a', { protocol: 'moonlight', extraConfig: { fps: 60 } }],
+      ['conn-attacker-ssh-b', { protocol: 'moonlight' }],
+    ] as const) {
+      // State left behind by an install that predates the strip: mlHostId on an ssh row.
+      execute(
+        `INSERT INTO connections (id, user_id, name, protocol, host, port, extra_config_json, shared) VALUES (?, ?, ?, 'ssh', ?, ?, ?, 0)`,
+        [id, ATTACKER, id, '10.0.0.4', 22, JSON.stringify({ mlHostId: VICTIM_HOST })],
+      );
+      const res = await attackerFetch(`${baseUrl}/${id}`, { method: 'PUT', body: JSON.stringify(body) });
+      assert.equal(res.status, 200);
+      assert.equal('mlHostId' in storedExtra(id), false, id);
+    }
+    assert.equal(canAccessMoonlightHost(ATTACKER, VICTIM_HOST), false);
+  });
 });

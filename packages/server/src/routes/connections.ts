@@ -809,6 +809,8 @@ router.put('/:id', (req: Request, res: Response) => {
       let prev: Record<string, unknown> = {};
       try {
         if (existing.extra_config_json) prev = JSON.parse(existing.extra_config_json) as Record<string, unknown>;
+        // The stored config of a non-moonlight row may carry a planted mlHostId; never inherit it.
+        if (existing.protocol !== 'moonlight') prev = stripServerManagedExtra(prev);
       } catch { /* ignore */ }
       nextExtra = {
         ...prev,
@@ -817,6 +819,13 @@ router.put('/:id', (req: Request, res: Response) => {
     }
     updates.push('extra_config_json = ?');
     params.push(nextExtra ? JSON.stringify(nextExtra) : null);
+  }
+  if (extraConfig === undefined && protocol === 'moonlight' && existing.protocol !== 'moonlight' && existing.extra_config_json) {
+    // Switching a row to moonlight without resending its config: drop any mlHostId it was holding.
+    try {
+      updates.push('extra_config_json = ?');
+      params.push(JSON.stringify(stripServerManagedExtra(JSON.parse(existing.extra_config_json))));
+    } catch { updates.pop(); }
   }
   if (tags !== undefined) { updates.push('tags = ?'); params.push(Array.isArray(tags) ? JSON.stringify(tags.map((t: string) => t.trim()).filter(Boolean)) : null); }
   if (skipCertValidation !== undefined) { updates.push('skip_cert_validation = ?'); params.push(skipCertValidation ? 1 : 0); }
