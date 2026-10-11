@@ -67,7 +67,7 @@ export function ActiveSessions() {
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between">
-        <h2 className="text-base font-semibold text-text-primary">Who's connected</h2>
+        <h2 className="text-base font-semibold text-text-primary">Active Sessions</h2>
         {!stopped && <span className="text-xs text-text-secondary">Refreshes every {POLL_MS / 1000}s</span>}
       </div>
 

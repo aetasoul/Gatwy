@@ -177,7 +177,7 @@ const ADMIN_NAV: NavItem[] = [
   { id: 'security', label: 'Security', icon: <ShieldIcon />, permission: 'settings.security' },
   { id: 'authentication', label: 'Authentication', icon: <KeyIcon />, permission: 'settings.auth_providers' },
   { id: 'sessions', label: 'Recordings', icon: <HistoryIcon />, permission: ['sessions.view_any', 'sessions.view_own'] },
-  { id: 'active-sessions', label: 'Connected', icon: <UsersIcon />, permission: 'sessions.view_active' },
+  { id: 'active-sessions', label: 'Active Sessions', icon: <UsersIcon />, permission: 'sessions.view_active' },
   { id: 'audit', label: 'Audit', icon: <ListIcon />, permission: ['audit.view_any', 'audit.view_own'] },
   { id: 'users', label: 'Users', icon: <UsersIcon />, permission: 'users.manage' },
   { id: 'roles', label: 'Roles', icon: <RolesIcon />, permission: 'roles.manage' },
@@ -202,7 +202,7 @@ const NAV_LABEL_MAP: Record<Section, string> = {
   'authentication': 'Authentication',
   'backup': 'Backup & Restore',
   'roles': 'Roles',
-  'active-sessions': "Who's connected",
+  'active-sessions': 'Active Sessions',
 };
 
 export function SettingsPanel({ isOpen, onClose, initialSection }: SettingsPanelProps) {

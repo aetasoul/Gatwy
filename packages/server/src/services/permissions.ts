@@ -54,7 +54,7 @@ export const PERMISSION_GROUPS: Record<string, { label: string; permissions: { k
       { key: 'sessions.view_own', label: 'View own recordings' },
       { key: 'sessions.view_any', label: 'View all recordings' },
       { key: 'sessions.delete', label: 'Delete / purge recordings' },
-      { key: 'sessions.view_active', label: "View who's connected (live sessions)" },
+      { key: 'sessions.view_active', label: 'View active sessions (live)' },
     ],
   },
   audit: {
