@@ -965,6 +965,44 @@ router.get('/:id', (req: Request, res: Response) => {
   });
 });
 
+// Accept the host key an SSH server presented after it changed (see 'hostKeyChanged' in ws/sshProxy.ts)
+router.post('/:id/trust-host-key', (req: Request, res: Response) => {
+  const userId = req.user!.userId;
+  const id = req.params.id as string;
+  const { fingerprint } = req.body as { fingerprint?: unknown };
+
+  if (typeof fingerprint !== 'string' || !/^[0-9a-f]{64}$/.test(fingerprint)) {
+    res.status(400).json({ error: 'Invalid fingerprint' });
+    return;
+  }
+
+  const access = connectionAccessWhere('connections', userId, req.user!.role);
+  const conn = queryOne<{ id: string; name: string; host: string; port: number; protocol: string; user_id: string; host_fingerprint: string | null }>(
+    `SELECT id, name, host, port, protocol, user_id, host_fingerprint FROM connections WHERE id = ? AND ${access.where}`,
+    [id, ...access.params],
+  );
+  if (!conn || (conn.protocol !== 'ssh' && conn.protocol !== 'sftp')) {
+    res.status(404).json({ error: 'Connection not found' });
+    return;
+  }
+  if (conn.user_id !== userId && !userCan(req, 'connections.edit_any')) {
+    res.status(403).json({ error: 'Only the connection owner can trust a new host key' });
+    return;
+  }
+
+  execute('UPDATE connections SET host_fingerprint = ? WHERE id = ?', [fingerprint, id]);
+
+  logAudit({
+    userId,
+    eventType: 'connection.host_key_trusted',
+    target: conn.name,
+    details: { connectionId: id, host: conn.host, port: conn.port, previousFingerprint: conn.host_fingerprint, fingerprint },
+    ipAddress: req.ip,
+  });
+
+  res.json({ success: true });
+});
+
 // Get session credentials (decrypted password for RDP client auth)
 router.get('/:id/session', (req: Request, res: Response) => {
   const userId = req.user!.userId;

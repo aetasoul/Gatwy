@@ -87,6 +87,7 @@ const EVENT_GROUPS: { label: string; events: { value: string; label: string }[] 
       { value: 'session.ssh.connect', label: 'SSH session connected' },
       { value: 'session.ssh.disconnect', label: 'SSH session disconnected' },
       { value: 'session.ssh.tunnel.blocked', label: 'SSH tunnel blocked (SSRF guard)' },
+      { value: 'session.ssh.host_key_mismatch', label: 'SSH host key changed (connection refused)' },
       { value: 'session.telnet.connect', label: 'Telnet session connected' },
       { value: 'session.telnet.disconnect', label: 'Telnet session disconnected' },
       { value: 'session.vnc.connect', label: 'VNC session connected' },

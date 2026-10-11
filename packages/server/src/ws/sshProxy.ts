@@ -353,6 +353,25 @@ export function setupSshProxy(server: https.Server, basePath = ''): void {
     });
 
     ssh.on('error', (err: Error) => {
+      if (hostKeyMismatch) {
+        logAudit({
+          userId, eventType: 'session.ssh.host_key_mismatch',
+          target: `${conn.host}:${conn.port}`,
+          details: { connectionId, previousFingerprint: hostKeyMismatch.previous, presentedFingerprint: hostKeyMismatch.current },
+          ipAddress: clientIp,
+        });
+        if (ws.readyState === WebSocket.OPEN) {
+          ws.send(JSON.stringify({
+            type: 'hostKeyChanged',
+            host: conn.host,
+            port: conn.port,
+            previousFingerprint: hostKeyMismatch.previous,
+            fingerprint: hostKeyMismatch.current,
+          }));
+          ws.close(4003, 'Host key changed');
+        }
+        return;
+      }
       console.error('[ssh] error:', err.message);
       if (ws.readyState === WebSocket.OPEN) {
         ws.send(JSON.stringify({ type: 'error', message: err.message }));
@@ -384,10 +403,13 @@ export function setupSshProxy(server: https.Server, basePath = ''): void {
     const privateKey = preparedKey && 'key' in preparedKey ? preparedKey.key.privateKey : undefined;
     const passphrase = preparedKey && 'key' in preparedKey ? preparedKey.key.passphrase : undefined;
 
+    let hostKeyMismatch: { previous: string; current: string } | null = null;
     const hostVerifier = (key: Buffer): boolean => {
       const fingerprint = crypto.createHash('sha256').update(key).digest('hex');
       if (conn.host_fingerprint) {
-        return conn.host_fingerprint === fingerprint;
+        if (conn.host_fingerprint === fingerprint) return true;
+        hostKeyMismatch = { previous: conn.host_fingerprint, current: fingerprint };
+        return false;
       }
       execute('UPDATE connections SET host_fingerprint = ? WHERE id = ?', [fingerprint, conn.id]);
       return true;

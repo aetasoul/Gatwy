@@ -28,6 +28,19 @@ interface TunnelInfo {
   error?: string;
 }
 
+interface HostKeyChange {
+  host: string;
+  port: number;
+  previousFingerprint: string;
+  fingerprint: string;
+}
+
+// Matches the `SHA256:...` format printed by ssh-keygen -l and OpenSSH.
+function formatFingerprint(hex: string): string {
+  const bytes = hex.match(/../g)?.map((h) => parseInt(h, 16)) ?? [];
+  return `SHA256:${btoa(String.fromCharCode(...bytes)).replace(/=+$/, '')}`;
+}
+
 export function SshSession({ tab, isActive, paneWidth, paneHeight, onStatusChange, onClose }: SshSessionProps) {
   const termRef = useRef<HTMLDivElement>(null);
   const terminalRef = useRef<Terminal | null>(null);
@@ -43,7 +56,10 @@ export function SshSession({ tab, isActive, paneWidth, paneHeight, onStatusChang
   const [promptInput, setPromptInput] = useState('');
   const promptOnConnectRef = useRef(false);
   const oneTimePasswordRef = useRef('');
-
+  const [hostKeyChange, setHostKeyChange] = useState<HostKeyChange | null>(null);
+  const [trustError, setTrustError] = useState('');
+  const [trusting, setTrusting] = useState(false);
+  const hostKeyChangeRef = useRef(false);
   // Destructure per-user SSH prefs (fetched from /api/v1/profile/ssh-prefs)
   const { fontSize: sshFontSize, fontFamily: sshFontFamily, scrollback: sshScrollback,
           cursorStyle: sshCursorStyle, cursorBlink: sshCursorBlink, theme: sshThemeName,
@@ -54,6 +70,9 @@ export function SshSession({ tab, isActive, paneWidth, paneHeight, onStatusChang
     setDisconnected(false);
     setDisconnectMessage('');
     setActiveTunnels([]);
+    hostKeyChangeRef.current = false;
+    setHostKeyChange(null);
+    setTrustError('');
     if (promptOnConnectRef.current) {
       oneTimePasswordRef.current = '';
       setPromptInput('');
@@ -76,6 +95,30 @@ export function SshSession({ tab, isActive, paneWidth, paneHeight, onStatusChang
       })
       .catch(() => setPromptState('ready'));
   }, [tab.connectionId]);
+
+  const handleTrustHostKey = useCallback(async () => {
+    if (!hostKeyChange) return;
+    setTrusting(true);
+    setTrustError('');
+    try {
+      const res = await fetch(`/api/v1/connections/${tab.connectionId}/trust-host-key`, {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ fingerprint: hostKeyChange.fingerprint }),
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({})) as { error?: string };
+        setTrustError(data.error || `Failed to trust host key (${res.status})`);
+        return;
+      }
+      handleReconnect();
+    } catch {
+      setTrustError('Failed to trust host key');
+    } finally {
+      setTrusting(false);
+    }
+  }, [hostKeyChange, tab.connectionId, handleReconnect]);
 
   const handlePromptSubmit = useCallback((e: FormEvent) => {
     e.preventDefault();
@@ -204,6 +247,17 @@ export function SshSession({ tab, isActive, paneWidth, paneHeight, onStatusChang
               if (!cancelled) { setDisconnectMessage(msg.message); setDisconnected(true); onStatusChange(tab.id, 'disconnected'); }
             } else if (msg.type === 'tunnels') {
               setActiveTunnels(msg.tunnels || []);
+            } else if (msg.type === 'hostKeyChanged') {
+              if (!cancelled) {
+                hostKeyChangeRef.current = true;
+                setHostKeyChange({
+                  host: msg.host,
+                  port: msg.port,
+                  previousFingerprint: msg.previousFingerprint,
+                  fingerprint: msg.fingerprint,
+                });
+                onStatusChange(tab.id, 'disconnected');
+              }
             }
             return;
           } catch { /* not JSON — write as terminal data */ }
@@ -214,6 +268,7 @@ export function SshSession({ tab, isActive, paneWidth, paneHeight, onStatusChang
       };
 
       const handleClose = (reason: string) => {
+        if (hostKeyChangeRef.current) return;
         if (!cancelled) { setDisconnected(true); setDisconnectMessage(reason); onStatusChange(tab.id, 'disconnected'); }
       };
       ws.onclose = (e) => { if (e.code === 4001) return; handleClose(e.reason || 'Disconnected'); };
@@ -335,8 +390,68 @@ export function SshSession({ tab, isActive, paneWidth, paneHeight, onStatusChang
         </div>
       )}
 
+      {hostKeyChange && (
+        <div className="absolute inset-0 z-20 flex items-center justify-center bg-black/80 p-4">
+          <div className="bg-surface border border-red-500/40 rounded-xl p-5 w-full max-w-lg flex flex-col gap-4 shadow-2xl">
+            <div className="flex items-start gap-3">
+              <div className="w-10 h-10 shrink-0 rounded-full bg-red-500/15 flex items-center justify-center">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-red-400">
+                  <path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z" />
+                  <line x1="12" y1="9" x2="12" y2="13" />
+                  <line x1="12" y1="17" x2="12.01" y2="17" />
+                </svg>
+              </div>
+              <div>
+                <h3 className="text-text-primary font-semibold">Host key changed</h3>
+                <p className="text-xs text-text-secondary mt-1">
+                  The SSH host key of <span className="font-mono text-text-primary">{hostKeyChange.host}:{hostKeyChange.port}</span> does
+                  not match the one saved for <span className="text-text-primary">{tab.name}</span>. This is expected if the
+                  server was rebuilt or its SSH keys were regenerated. If you did not expect this, someone may be
+                  intercepting the connection.
+                </p>
+              </div>
+            </div>
+
+            <div className="flex flex-col gap-2 text-xs">
+              <div>
+                <p className="text-text-secondary mb-0.5">Previously trusted</p>
+                <p className="font-mono break-all bg-[#1a1a1a] border border-border rounded px-2 py-1 text-text-primary">
+                  {formatFingerprint(hostKeyChange.previousFingerprint)}
+                </p>
+              </div>
+              <div>
+                <p className="text-text-secondary mb-0.5">Presented by server</p>
+                <p className="font-mono break-all bg-[#1a1a1a] border border-red-500/40 rounded px-2 py-1 text-text-primary">
+                  {formatFingerprint(hostKeyChange.fingerprint)}
+                </p>
+              </div>
+            </div>
+
+            {trustError && <p className="text-xs text-red-400">{trustError}</p>}
+
+            <div className="flex gap-2">
+              <button
+                type="button"
+                onClick={() => onClose(tab.id)}
+                className="flex-1 px-3 py-2 text-sm border border-border text-text-secondary rounded-lg hover:bg-surface-hover transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={handleTrustHostKey}
+                disabled={trusting}
+                className="flex-1 px-3 py-2 text-sm bg-red-600 text-white rounded-lg hover:bg-red-500 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {trusting ? 'Saving...' : 'Trust new key & connect'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       <DisconnectOverlay
-        show={disconnected}
+        show={disconnected && !hostKeyChange}
         message={disconnectMessage}
         onExit={() => onClose(tab.id)}
         onReconnect={handleReconnect}
