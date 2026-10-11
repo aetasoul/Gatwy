@@ -174,10 +174,10 @@ const MY_SETTINGS_NAV: NavItem[] = [
 
 const ADMIN_NAV: NavItem[] = [
   { id: 'global', label: 'General', icon: <SlidersIcon />, permission: 'settings.manage' },
+  { id: 'active-sessions', label: 'Active Sessions', icon: <UsersIcon />, permission: 'sessions.view_active' },
   { id: 'security', label: 'Security', icon: <ShieldIcon />, permission: 'settings.security' },
   { id: 'authentication', label: 'Authentication', icon: <KeyIcon />, permission: 'settings.auth_providers' },
   { id: 'sessions', label: 'Recordings', icon: <HistoryIcon />, permission: ['sessions.view_any', 'sessions.view_own'] },
-  { id: 'active-sessions', label: 'Active Sessions', icon: <UsersIcon />, permission: 'sessions.view_active' },
   { id: 'audit', label: 'Audit', icon: <ListIcon />, permission: ['audit.view_any', 'audit.view_own'] },
   { id: 'users', label: 'Users', icon: <UsersIcon />, permission: 'users.manage' },
   { id: 'roles', label: 'Roles', icon: <RolesIcon />, permission: 'roles.manage' },
