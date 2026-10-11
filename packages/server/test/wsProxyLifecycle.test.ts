@@ -43,6 +43,7 @@ const { setupTelnetProxy } = await import('../src/ws/telnetProxy.js');
 const { setupRdpProxy } = await import('../src/ws/rdpProxy.js');
 const { setupVncProxy } = await import('../src/ws/vncProxy.js');
 const { getSession } = await import('../src/ws/sshSessionCache.js');
+const { listActiveSessions } = await import('../src/ws/activeSessions.js');
 
 const LIMIT = 2;
 
@@ -366,6 +367,43 @@ describe('connection limit accounting on the WebSocket proxies', () => {
     assert.ok(isConnected(next), 'a slot should be free after the expiry');
     const overLimit = open(`/ws/telnet?connectionId=tel-grace&sessionId=${sid()}`, 'u-tel-grace');
     assert.equal(await overLimit.closed, 4008);
+  });
+});
+
+// An explicit close (the user closed the tab) must not wait for the reattach grace period.
+describe('explicit close from the browser', () => {
+  const liveOf = (user: string) => listActiveSessions().filter((s) => s.userId === user);
+
+  it('SSH: ends the session at once instead of entering the reattach grace period', async () => {
+    addUser('u-ssh-close');
+    addConn('ssh-close', 'u-ssh-close', 'ssh', sshUpstream.port);
+    const c = open(`/ws/ssh?connectionId=ssh-close&sessionId=${sid()}`, 'u-ssh-close');
+    await until(() => liveOf('u-ssh-close').length === 1, 5000);
+    assert.equal(liveOf('u-ssh-close').length, 1);
+
+    c.ws.send(JSON.stringify({ type: 'close' }));
+    await c.closed;
+    await until(() => liveOf('u-ssh-close').length === 0, 3000);
+
+    assert.equal(liveOf('u-ssh-close').length, 0, 'the session must not be listed as reconnecting');
+    await sleep(300);
+    assert.equal(disconnectRows('session.ssh.disconnect', 'ssh-close').length, 1);
+  });
+
+  it('Telnet: ends the session at once instead of entering the reattach grace period', async () => {
+    addUser('u-tel-close');
+    addConn('tel-close', 'u-tel-close', 'telnet', tcpUpstream.port);
+    const c = open(`/ws/telnet?connectionId=tel-close&sessionId=${sid()}`, 'u-tel-close');
+    await until(() => liveOf('u-tel-close').length === 1, 5000);
+    assert.equal(liveOf('u-tel-close').length, 1);
+
+    c.ws.send(JSON.stringify({ type: 'close' }));
+    await c.closed;
+    await until(() => liveOf('u-tel-close').length === 0, 3000);
+
+    assert.equal(liveOf('u-tel-close').length, 0, 'the session must not be listed as reconnecting');
+    await sleep(300);
+    assert.equal(disconnectRows('session.telnet.disconnect', 'tel-close').length, 1);
   });
 });
 

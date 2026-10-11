@@ -159,6 +159,12 @@ export function SshSession({ tab, isActive, paneWidth, paneHeight, onStatusChang
     return () => clearTimeout(timer);
   }, [isActive]);
 
+  // Unmount means the tab was closed. Declared before the main effect: its cleanup nulls wsRef.
+  useEffect(() => () => {
+    const ws = wsRef.current;
+    if (ws?.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: 'close' }));
+  }, []);
+
   useEffect(() => {
     if (!termRef.current || !token || sshPrefsLoading || promptState !== 'ready') return;
     let cancelled = false;

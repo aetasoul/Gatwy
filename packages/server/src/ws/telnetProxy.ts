@@ -231,7 +231,12 @@ function wireClientWs(
     if (!s) return;
     try {
       const json = JSON.parse(typeof msg === 'string' ? msg : msg.toString('utf8'));
-      if (json.type === 'resize') {
+      if (json.type === 'close') {
+        // The user closed the tab: unlike a refresh or a dropped network, no reattach will follow.
+        clearGrace(clientSessionId);
+        teardownSession(clientSessionId, s, userId, host, port, connectionId, sessionDbId, clientIp);
+        ws.close(1000, 'Closed');
+      } else if (json.type === 'resize') {
         s.cols = json.cols; s.rows = json.rows;
         s.socket.write(buildNawsSubneg(s.cols, s.rows));
       } else if (json.type === 'data') {
