@@ -13,7 +13,7 @@ process.env.DATA_DIR = dataDir;
 process.env.JWT_SECRET = 'moonlight-idor-test-secret';
 
 const { initDb, closeDb } = await import('../src/db/index.js');
-const { execute } = await import('../src/db/helpers.js');
+const { execute, queryAll } = await import('../src/db/helpers.js');
 const {
   canAccessMoonlightHost,
   classifyMoonlightRequest,
@@ -308,6 +308,25 @@ describe('stream WebSocket bridge (the IDOR: host_id in the first message)', () 
     assert.equal(await closed, 1008);
     await settle();
     assert.equal(upstreamSeen.length, 0);
+  });
+
+  it('writes an audit entry for a refused host, without the query string', async () => {
+    upstreamSeen = [];
+    execute(`DELETE FROM audit_log WHERE event_type = 'session.moonlight.denied'`);
+    const ws = new WebSocket(`ws://127.0.0.1:${gatewayPort}${MLW_STREAM_WS_PATH}?token=do-not-log`, { headers: { 'x-test-user': OTHER } });
+    await once(ws, 'open');
+    const closed = closeCode(ws);
+    ws.send(request(HOST_OWNER));
+    assert.equal(await closed, 1008);
+
+    const rows = queryAll<{ user_id: string; target: string; details_json: string }>(
+      `SELECT user_id, target, details_json FROM audit_log WHERE event_type = 'session.moonlight.denied'`,
+    );
+    assert.equal(rows.length, 1);
+    assert.equal(rows[0].user_id, OTHER);
+    assert.equal(rows[0].target, MLW_STREAM_WS_PATH);
+    assert.deepEqual(JSON.parse(rows[0].details_json), { hostId: HOST_OWNER, reason: 'Host not permitted' });
+    assert.ok(!JSON.stringify(rows[0]).includes('do-not-log'), 'no query string in the audit entry');
   });
 
   it('refuses an unknown host', async () => {

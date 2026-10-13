@@ -17,6 +17,8 @@ import {
   isStreamRequestMessage,
   parseStreamRequest,
 } from './moonlightGuard.js';
+import { logAudit } from '../services/audit.js';
+import { resolveClientIp } from '../services/ip.js';
 import { injectGatwyMoonlightChrome, shouldThemeMoonlightHtml } from './moonlightChrome.js';
 
 const PREFIX = '/mlw';
@@ -140,7 +142,17 @@ export function bridgeStream(
       if (isBinary) { reject('Expected a stream request'); return; }
       const request = parseStreamRequest(rawBuffer(data).toString('utf8'));
       if (!request.ok) { reject(request.reason); return; }
-      if (!canAccessMoonlightHost(userId, request.hostId)) { reject('Host not permitted'); return; }
+      if (!canAccessMoonlightHost(userId, request.hostId)) {
+        // `path` is the classified path (never the raw URL), so no query string reaches the log.
+        logAudit({
+          userId, eventType: 'session.moonlight.denied',
+          target: path,
+          details: { hostId: request.hostId, reason: 'Host not permitted' },
+          ipAddress: resolveClientIp(req),
+        });
+        reject('Host not permitted');
+        return;
+      }
       connectUpstream(request.forward);
       return;
     }
