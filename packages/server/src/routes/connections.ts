@@ -1,4 +1,5 @@
-import { Router, type Request, type Response } from 'express';
+import { Router, type Request, type Response, type NextFunction } from 'express';
+import { largeJson, CONNECTIONS_IMPORT_JSON_LIMIT } from '../middleware/bodyParsers.js';
 import net from 'net';
 import { v4 as uuid } from 'uuid';
 import { queryAll, queryOne, execute } from '../db/helpers.js';
@@ -403,11 +404,13 @@ router.get('/export', (req: Request, res: Response) => {
 });
 
 // POST /import — import connections from JSON
-router.post('/import', (req: Request, res: Response) => {
+router.post('/import', (req: Request, res: Response, next: NextFunction) => {
   if (!userCan(req, 'connections.import_export')) {
     res.status(403).json({ error: 'Insufficient permissions' });
     return;
   }
+  next();
+}, largeJson(CONNECTIONS_IMPORT_JSON_LIMIT), (req: Request, res: Response) => {
   const userId = req.user!.userId;
   const { groups, connections } = req.body as {
     version?: number;

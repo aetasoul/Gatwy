@@ -1,4 +1,5 @@
-import { Router, type Request, type Response } from 'express';
+import { Router, type Request, type Response, type NextFunction } from 'express';
+import { largeJson, SETTINGS_JSON_LIMIT } from '../middleware/bodyParsers.js';
 import crypto from 'crypto';
 import { authRequired, userCan } from '../middleware/auth.js';
 import { logAudit } from '../services/audit.js';
@@ -135,12 +136,15 @@ router.get('/', (req: Request, res: Response) => {
 });
 
 // PUT / — update settings (settings.manage permission)
-router.put('/', (req: Request, res: Response) => {
+// The permission is checked before the large (logo-sized) body parser so only authorised
+// users can make the server buffer up to SETTINGS_JSON_LIMIT.
+router.put('/', (req: Request, res: Response, next: NextFunction) => {
   if (!userCan(req, 'settings.manage')) {
     res.status(403).json({ error: 'Insufficient permissions' });
     return;
   }
-
+  next();
+}, largeJson(SETTINGS_JSON_LIMIT), (req: Request, res: Response) => {
   const updates = req.body as Record<string, string>;
   if (typeof updates !== 'object' || Array.isArray(updates) || updates === null) {
     res.status(400).json({ error: 'Body must be a JSON object of key-value pairs' });
