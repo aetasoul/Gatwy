@@ -2,6 +2,18 @@
 
 Gatwy is MIT-licensed. See [LICENSE](LICENSE).
 
+## Bundled: terminal fonts
+
+The SSH terminal font choices are self-hosted from the `@fontsource` packages, so the UI makes no request to Google Fonts and works offline.
+
+| Font | License |
+| --- | --- |
+| Fira Code | SIL Open Font License 1.1 |
+| Source Code Pro | SIL Open Font License 1.1 |
+| Inconsolata | SIL Open Font License 1.1 |
+| Roboto Mono | SIL Open Font License 1.1 |
+| Ubuntu Mono | Ubuntu Font Licence 1.0 |
+
 ## Optional: moonlight-web-stream (GPL-3.0)
 
 [moonlight-web-stream](https://github.com/MrCreativ3001/moonlight-web-stream) is used only when an operator sets `ENABLE_MOONLIGHT=1` (`true` / `yes` also work).

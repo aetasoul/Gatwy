@@ -66,6 +66,20 @@ export function SshSession({ tab, isActive, paneWidth, paneHeight, onStatusChang
           loading: sshPrefsLoading } = sshPrefs;
   const sshTheme = SSH_THEMES[sshThemeName] ?? SSH_THEMES['vscode-dark'];
 
+  // Bundled webfonts load lazily; xterm measures its cell size at open(), so wait for the
+  // selected font (bounded, so a missing font file never blocks the terminal).
+  const fontKey = `${sshFontSize}px ${sshFontFamily}`;
+  const [loadedFontKey, setLoadedFontKey] = useState<string | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    const ready = () => { if (!cancelled) setLoadedFontKey(fontKey); };
+    Promise.race([
+      document.fonts.load(fontKey),
+      new Promise((resolve) => setTimeout(resolve, 2000)),
+    ]).then(ready, ready);
+    return () => { cancelled = true; };
+  }, [fontKey]);
+
   const handleReconnect = useCallback(() => {
     setDisconnected(false);
     setDisconnectMessage('');
@@ -166,7 +180,7 @@ export function SshSession({ tab, isActive, paneWidth, paneHeight, onStatusChang
   }, []);
 
   useEffect(() => {
-    if (!termRef.current || !token || sshPrefsLoading || promptState !== 'ready') return;
+    if (!termRef.current || !token || sshPrefsLoading || promptState !== 'ready' || loadedFontKey !== fontKey) return;
     let cancelled = false;
 
     const term = new Terminal({
@@ -301,7 +315,7 @@ export function SshSession({ tab, isActive, paneWidth, paneHeight, onStatusChang
       fitAddonRef.current = null;
       wsRef.current = null;
     };
-  }, [tab.id, tab.connectionId, token, onStatusChange, reconnectCount, promptState, sshFontSize, sshFontFamily, sshScrollback, sshCursorStyle, sshCursorBlink, sshThemeName, sshPrefsLoading]);
+  }, [tab.id, tab.connectionId, token, onStatusChange, reconnectCount, promptState, sshFontSize, sshFontFamily, sshScrollback, sshCursorStyle, sshCursorBlink, sshThemeName, sshPrefsLoading, loadedFontKey, fontKey]);
 
   // Re-fit when the tunnels bar appears or disappears so xterm recalculates
   // its available height (flex-1 container shrinks/grows accordingly).

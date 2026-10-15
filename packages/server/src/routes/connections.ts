@@ -8,6 +8,7 @@ import { logAudit } from '../services/audit.js';
 import { applyCredential, checkCredentialAssignable, connectionsWithUnshareableCredential, isConnectionShared } from '../services/credentials.js';
 import { prepareKey } from '../services/sshKeys.js';
 import { filterListedConnections, isMoonlightWebAvailable, runtimeFeatures } from '../services/moonlightWeb.js';
+import { stripServerManagedExtra } from '../services/moonlightPairing.js';
 import {
   accessibleSharedGroupIds, connectionAccessWhere, descendantGroupIds, groupOwnedBy,
   editableSharedGroupIds, canWriteSharedGroup, isSharedGroup, isSharedConnection,
@@ -568,7 +569,7 @@ router.post('/', (req: Request, res: Response) => {
     [
       id, ownerId, groupId || null, name, protocol, host, port,
       credentialId ? null : (username || null), encryptedPassword, encryptedKey,
-      extraConfig ? JSON.stringify(extraConfig) : null, 0,
+      extraConfig ? JSON.stringify(stripServerManagedExtra(extraConfig)) : null, 0,
       effectiveShared ? 1 : 0,
       tunnels ? JSON.stringify(tunnels) : null,
       tagsStr,
@@ -803,19 +804,28 @@ router.put('/:id', (req: Request, res: Response) => {
   if (shared !== undefined) { updates.push('shared = ?'); params.push(shared ? 1 : 0); }
   if (tunnels !== undefined) { updates.push('tunnels_json = ?'); params.push(tunnels ? JSON.stringify(tunnels) : null); }
   if (extraConfig !== undefined) {
-    let nextExtra = extraConfig;
+    let nextExtra = stripServerManagedExtra(extraConfig);
     if (existing.protocol === 'moonlight' || protocol === 'moonlight') {
       let prev: Record<string, unknown> = {};
       try {
         if (existing.extra_config_json) prev = JSON.parse(existing.extra_config_json) as Record<string, unknown>;
+        // The stored config of a non-moonlight row may carry a planted mlHostId; never inherit it.
+        if (existing.protocol !== 'moonlight') prev = stripServerManagedExtra(prev);
       } catch { /* ignore */ }
       nextExtra = {
         ...prev,
-        ...(extraConfig && typeof extraConfig === 'object' ? extraConfig as Record<string, unknown> : {}),
+        ...(nextExtra && typeof nextExtra === 'object' ? nextExtra as Record<string, unknown> : {}),
       };
     }
     updates.push('extra_config_json = ?');
     params.push(nextExtra ? JSON.stringify(nextExtra) : null);
+  }
+  if (extraConfig === undefined && protocol === 'moonlight' && existing.protocol !== 'moonlight' && existing.extra_config_json) {
+    // Switching a row to moonlight without resending its config: drop any mlHostId it was holding.
+    try {
+      updates.push('extra_config_json = ?');
+      params.push(JSON.stringify(stripServerManagedExtra(JSON.parse(existing.extra_config_json))));
+    } catch { updates.pop(); }
   }
   if (tags !== undefined) { updates.push('tags = ?'); params.push(Array.isArray(tags) ? JSON.stringify(tags.map((t: string) => t.trim()).filter(Boolean)) : null); }
   if (skipCertValidation !== undefined) { updates.push('skip_cert_validation = ?'); params.push(skipCertValidation ? 1 : 0); }

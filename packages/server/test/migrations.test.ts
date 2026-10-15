@@ -60,7 +60,7 @@ describe('migration upgrade path', () => {
     const resourceSharesAfter = after.exec("SELECT name FROM sqlite_master WHERE type='table' AND name='resource_shares'");
     assert.equal(resourceSharesAfter.length, 1, 'resource_shares table must exist after upgrading from v21');
     const maxAfter = after.exec('SELECT MAX(version) as v FROM schema_version')[0]!.values[0]![0];
-    assert.equal(maxAfter, 26);
+    assert.equal(maxAfter, 27);
   });
 
   it('migrates real connection_shares and group_shares rows into resource_shares from a v22 database', () => {
@@ -114,7 +114,7 @@ describe('migration upgrade path', () => {
     assert.equal(oldTables.length, 0, 'connection_shares and group_shares must not survive past v23');
 
     const maxAfter = after.exec('SELECT MAX(version) as v FROM schema_version')[0]!.values[0]![0];
-    assert.equal(maxAfter, 26);
+    assert.equal(maxAfter, 27);
   });
 
   it('applies a lower-numbered migration that is missing even when a higher one is already applied', () => {
@@ -127,7 +127,7 @@ describe('migration upgrade path', () => {
     db.run('DELETE FROM schema_version WHERE version = 22');
 
     const maxBefore = db.exec('SELECT MAX(version) as v FROM schema_version')[0]!.values[0]![0];
-    assert.equal(maxBefore, 26, 'precondition: a higher version is already applied');
+    assert.equal(maxBefore, 27, 'precondition: a higher version is already applied');
     assert.equal(db.exec("SELECT name FROM sqlite_master WHERE type='table' AND name='group_shares'").length, 0);
 
     restoreDbFromBytes(Buffer.from(db.export()));
@@ -349,7 +349,7 @@ describe('migration upgrade path', () => {
       rewindToV24(adminBefore);
 
       const maxAfter = getDb().exec('SELECT MAX(version) as v FROM schema_version')[0]!.values[0]![0];
-      assert.equal(maxAfter, 26);
+      assert.equal(maxAfter, 27);
 
       const admin = readPerms('admin');
       assert.equal(admin.filter((p) => p === PERM).length, 1, 'admin must have the permission exactly once');
@@ -367,27 +367,50 @@ describe('migration upgrade path', () => {
       assert.ok(!readPerms('user').includes(PERM));
     });
   });
-  describe('v26 sessions.disconnect grant', () => {
+
+  it('v26 clears mlHostId on every connection and keeps the rest of the config', () => {
+    const db = getDb();
+    db.run(`INSERT INTO users (id, username, password_hash, display_name, role) VALUES ('u-v25', 'v25-user', 'x', 'V25 User', 'user')`);
+    const seed = (id: string, protocol: string, extra: string | null) =>
+      db.run(`INSERT INTO connections (id, user_id, name, protocol, host, port, extra_config_json) VALUES (?, 'u-v25', ?, ?, 'h', 1, ?)`, [id, id, protocol, extra]);
+    seed('c-v25-ml-paired', 'moonlight', JSON.stringify({ paired: true, mlHostId: 7, appId: 3 }));
+    seed('c-v25-ml-planted', 'moonlight', JSON.stringify({ mlHostId: 99 }));
+    seed('c-v25-ml-null', 'moonlight', null);
+    seed('c-v25-ml-bad', 'moonlight', 'not json');
+    seed('c-v25-ssh', 'ssh', JSON.stringify({ mlHostId: 5 }));
+
+    db.run('DELETE FROM schema_version WHERE version = 26');
+    restoreDbFromBytes(Buffer.from(db.export()));
+
+    const migrated = getDb();
+    const extra = (id: string) => migrated.exec(`SELECT extra_config_json FROM connections WHERE id = '${id}'`)[0]!.values[0]![0] as string | null;
+    assert.deepEqual(JSON.parse(extra('c-v25-ml-paired')!), { paired: true, appId: 3 });
+    assert.deepEqual(JSON.parse(extra('c-v25-ml-planted')!), {});
+    assert.equal(extra('c-v25-ml-null'), null);
+    assert.equal(extra('c-v25-ml-bad'), 'not json');
+    assert.deepEqual(JSON.parse(extra('c-v25-ssh')!), {}, 'a planted mlHostId on a non-moonlight row must go too: PUT can switch it to moonlight');
+  });
+  describe('v27 sessions.disconnect grant', () => {
     const PERM = 'sessions.disconnect';
     const readPerms = (roleId: string): string[] => {
       const res = getDb().exec(`SELECT permissions_json FROM roles WHERE id = '${roleId}'`);
       return JSON.parse(res[0]!.values[0]![0] as string) as string[];
     };
-    // Rewind to v25 with the given admin permission set, then re-run migrations for real.
-    const rewindToV25 = (adminPerms: string[]) => {
+    // Rewind to v26 with the given admin permission set, then re-run migrations for real.
+    const rewindToV26 = (adminPerms: string[]) => {
       const db = getDb();
       db.run(`UPDATE roles SET permissions_json = ? WHERE id = 'admin'`, [JSON.stringify(adminPerms)]);
       db.run(`UPDATE roles SET permissions_json = ? WHERE id = 'user'`, [JSON.stringify(readPerms('user').filter((p) => p !== PERM))]);
-      db.run('DELETE FROM schema_version WHERE version > 25');
+      db.run('DELETE FROM schema_version WHERE version > 26');
       restoreDbFromBytes(Buffer.from(db.export()));
     };
 
-    it('grants sessions.disconnect to builtin admin exactly once and not to builtin user when upgrading from v25', () => {
+    it('grants sessions.disconnect to builtin admin exactly once and not to builtin user when upgrading from v26', () => {
       const adminBefore = readPerms('admin').filter((p) => p !== PERM);
-      rewindToV25(adminBefore);
+      rewindToV26(adminBefore);
 
       const maxAfter = getDb().exec('SELECT MAX(version) as v FROM schema_version')[0]!.values[0]![0];
-      assert.equal(maxAfter, 26);
+      assert.equal(maxAfter, 27);
 
       const admin = readPerms('admin');
       assert.equal(admin.filter((p) => p === PERM).length, 1, 'admin must have the permission exactly once');
@@ -399,13 +422,13 @@ describe('migration upgrade path', () => {
       const db = getDb();
       db.run(`INSERT OR REPLACE INTO roles (id, name, description, is_builtin, permissions_json) VALUES ('auditor-dc', 'Auditor DC', '', 0, ?)`,
         [JSON.stringify(['sessions.view_active'])]);
-      rewindToV25(readPerms('admin').filter((p) => p !== PERM));
+      rewindToV26(readPerms('admin').filter((p) => p !== PERM));
       assert.ok(!readPerms('auditor-dc').includes(PERM), 'a custom role opts in from the Roles page');
     });
 
     it('does not duplicate sessions.disconnect when admin already has it', () => {
       const adminWith = [...readPerms('admin').filter((p) => p !== PERM), PERM];
-      rewindToV25(adminWith);
+      rewindToV26(adminWith);
 
       const admin = readPerms('admin');
       assert.equal(admin.filter((p) => p === PERM).length, 1);
@@ -413,5 +436,4 @@ describe('migration upgrade path', () => {
       assert.ok(!readPerms('user').includes(PERM));
     });
   });
-
 });

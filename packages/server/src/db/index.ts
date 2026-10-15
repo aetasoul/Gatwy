@@ -1186,9 +1186,31 @@ function runMigrations() {
       },
     },
     {
+      // mlHostId used to be client-writable through POST/PUT /connections (extraConfig),
+      // so any value already stored on an existing install can't be trusted: a user may
+      // have planted another user's moonlight-web host id. It is server-managed from now
+      // on (only the pairing flow writes it), so clear every stored value — on every
+      // protocol, not just moonlight: a value planted on an ssh row would otherwise come
+      // back to life when the row is switched to moonlight with a PUT. ensureHost
+      // re-registers the host and restores mlHostId on the next /status or /session,
+      // restoring pairing from the encrypted store; a connection with no stored pairing
+      // has to be paired again.
+      version: 26,
+      run: (database: Database) => {
+        const res = database.exec(`SELECT id, extra_config_json FROM connections WHERE extra_config_json IS NOT NULL`);
+        for (const [id, json] of res[0]?.values ?? []) {
+          let extra: Record<string, unknown>;
+          try { extra = JSON.parse(json as string); } catch { continue; }
+          if (!extra || typeof extra !== 'object' || !('mlHostId' in extra)) continue;
+          delete extra.mlHostId;
+          database.run('UPDATE connections SET extra_config_json = ? WHERE id = ?', [JSON.stringify(extra), id as string]);
+        }
+      },
+    },
+    {
       // Disconnect button on the live view: grant sessions.disconnect to the builtin admin role only.
       // Custom roles opt in from the Roles page.
-      version: 26,
+      version: 27,
       run: (database: Database) => {
         const row = database.exec(`SELECT permissions_json FROM roles WHERE id = 'admin'`);
         if (!row.length || !row[0].values.length) return;
