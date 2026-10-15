@@ -12,7 +12,7 @@ import path from 'node:path';
 const { normalizeBasePath, config } = await import('../src/config.js');
 const { renderIndexHtml, renderManifest } = await import('../src/services/indexHtml.js');
 const { moonlightPathPrefix } = await import('../src/services/moonlightWeb.js');
-const { upstreamPath } = await import('../src/ws/moonlightProxy.js');
+const { classifyMoonlightRequest } = await import('../src/ws/moonlightGuard.js');
 
 describe('normalizeBasePath', () => {
   it("defaults to the root sentinel '/' for unset/empty input (no regression for existing deployments)", () => {
@@ -37,7 +37,7 @@ describe('normalizeBasePath', () => {
 });
 
 describe('moonlight under a prefix', () => {
-  it('moonlight-web is told the full public prefix, and the proxy forwards it unchanged', () => {
+  it('moonlight-web is told the full public prefix (BASE_PATH + /mlw)', () => {
     const prev = config.basePath;
     try {
       config.basePath = '/';
@@ -47,8 +47,35 @@ describe('moonlight under a prefix', () => {
     } finally {
       config.basePath = prev;
     }
-    assert.equal(upstreamPath('/sys/ftp/mlw/api/host?x=1', '/api/host?x=1', '/sys/ftp/mlw'), '/sys/ftp/mlw/api/host?x=1');
-    assert.equal(upstreamPath('/mlw/config.js', '/config.js', '/mlw'), '/mlw/config.js');
+  });
+
+  it('the guard takes the mount prefix and forwards the prefixed path upstream', () => {
+    const mount = '/sys/ftp/mlw';
+    assert.deepEqual(classifyMoonlightRequest('GET', '/sys/ftp/mlw/config.js?x=1', false, mount), {
+      kind: 'http', path: '/sys/ftp/mlw/config.js', search: '?x=1',
+    });
+    assert.deepEqual(classifyMoonlightRequest('GET', '/sys/ftp/mlw/api/role', false, mount), {
+      kind: 'http', path: '/sys/ftp/mlw/api/role', search: '',
+    });
+    assert.deepEqual(classifyMoonlightRequest('GET', '/sys/ftp/mlw/api/host/stream/web_socket', true, mount), {
+      kind: 'stream-ws', path: '/sys/ftp/mlw/api/host/stream/web_socket',
+    });
+    assert.deepEqual(classifyMoonlightRequest('GET', '/mlw/config.js', false), {
+      kind: 'http', path: '/mlw/config.js', search: '',
+    });
+  });
+
+  it('the guard stays fail-closed under a prefix', () => {
+    const mount = '/sys/ftp/mlw';
+    const kind = (method: string, url: string, upgrade = false) => classifyMoonlightRequest(method, url, upgrade, mount).kind;
+    assert.equal(kind('GET', '/mlw/config.js'), 'deny', 'unprefixed path is not the mount');
+    assert.equal(kind('GET', '/sys/ftp/mlwx/config.js'), 'deny');
+    assert.equal(kind('GET', '/sys/ftp/mlw/../x'), 'deny');
+    assert.equal(kind('GET', '/sys/ftp/mlw/%2e%2e/x'), 'deny');
+    assert.equal(kind('GET', '/sys/ftp/mlw/api/host'), 'deny', 'host listing is not allowlisted');
+    assert.equal(kind('POST', '/sys/ftp/mlw/api/host'), 'deny');
+    assert.equal(kind('GET', '/sys/ftp/mlw/api/pair', true), 'deny', 'only the stream WebSocket may upgrade');
+    assert.equal(kind('GET', '/mlw/api/host/stream/web_socket', true), 'deny', 'unprefixed stream path is not the mount');
   });
 });
 

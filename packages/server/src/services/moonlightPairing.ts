@@ -80,6 +80,17 @@ export function parseMoonlightExtra(raw: string | null | undefined): MoonlightEx
   }
 }
 
+/**
+ * `mlHostId` is the moonlight-web host a connection streams from. Only the pairing flow
+ * may set it: `canAccessMoonlightHost` trusts it to decide which host a user may stream
+ * from, and DELETE /:id/pairing deletes that host. Anything a client submits for it is dropped.
+ */
+export function stripServerManagedExtra<T>(extra: T): T {
+  if (!extra || typeof extra !== 'object' || Array.isArray(extra)) return extra;
+  const { mlHostId: _mlHostId, ...rest } = extra as Record<string, unknown>;
+  return rest as T;
+}
+
 export function mergeMoonlightExtra(
   existing: MoonlightExtraConfig,
   patch: Partial<MoonlightExtraConfig>,
