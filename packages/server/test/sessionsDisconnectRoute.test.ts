@@ -55,6 +55,16 @@ function register(id: string, end: () => void) {
 }
 
 describe('POST /active/:id/disconnect', () => {
+  it('is refused with 401 without a login, and the session is left alone', async () => {
+    let ended = 0;
+    register('s-anon', () => { ended++; });
+    const res = await fetch(`${baseUrl}/active/s-anon/disconnect`, { method: 'POST' });
+    assert.equal(res.status, 401);
+    assert.equal(ended, 0);
+    assert.ok(listActiveSessions().some((s) => s.id === 's-anon'));
+    removeActiveSession('s-anon');
+  });
+
   it('is refused with 403 for a role without sessions.disconnect, and the session is left alone', async () => {
     let ended = 0;
     register('s-forbidden', () => { ended++; });
