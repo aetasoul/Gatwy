@@ -92,14 +92,7 @@ async function main() {
       },
     },
   }));
-  // SECURITY: the raw-body parsers for SMB/SFTP/FTP upload, recording chunks, and backup
-  // import used to be mounted here, at the app level, before cookieParser/CSRF/ipRulesMiddleware
-  // and before each router's authRequired/requirePermission. That let an unauthenticated
-  // request buffer its entire body (up to 4 GB for /backup/import) into memory before any
-  // auth check ran. Each parser now lives on its own route, after that route's auth
-  // middleware — see routes/smb.ts, routes/sftp.ts, routes/ftp.ts, routes/sessions.ts
-  // (recording/chunk) and routes/backup.ts (import). (GHSA-r6f8-6m52-5jvf)
-  // Before any body parser: a blocked IP must not get its body buffered. (GHSA-r6f8-6m52-5jvf)
+  // Before any body parser: a blocked IP must not get its body buffered.
   app.use(`${bp}/api/v1`, ipRulesMiddleware);
   // Small global limit; the settings (logo) and connections-import routes mount a larger
   // parser themselves, after auth — see middleware/bodyParsers.ts. The exemption paths

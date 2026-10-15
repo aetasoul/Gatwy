@@ -151,7 +151,6 @@ router.post('/export', requirePermission('settings.backup'), (req: Request, res:
 // Body: raw .geb binary. Password in X-Backup-Password header.
 // SECURITY: express.raw() comes after requirePermission (which calls authRequired), not at
 // the app level, so the body is only read once the caller is authenticated and authorized.
-// (GHSA-r6f8-6m52-5jvf)
 router.post('/import', requirePermission('settings.backup'), express.raw({ limit: '4gb', type: 'application/octet-stream' }), async (req: Request, res: Response) => {
   const password = req.headers['x-backup-password'];
   if (!password || typeof password !== 'string') {

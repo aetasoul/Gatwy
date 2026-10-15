@@ -155,7 +155,7 @@ router.get('/:connectionId/download', async (req: Request, res: Response) => {
 
 // POST /:connectionId/upload — upload a file (body is raw buffer / req is readable)
 // SECURITY: express.raw() here (not at the app level) so the body is only read after
-// router.use(authRequired)/requirePermission and connectionAccessGuard have run. (GHSA-r6f8-6m52-5jvf)
+// router.use(authRequired)/requirePermission and connectionAccessGuard have run.
 router.post('/:connectionId/upload', connectionAccessGuard('ftp'), express.raw({ limit: '100mb', type: '*/*' }), async (req: Request, res: Response) => {
   const userId = req.user!.userId;
   const conn = getConn(req.params.connectionId as string, userId, req.user!.role);

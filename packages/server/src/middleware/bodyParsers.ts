@@ -1,6 +1,6 @@
 import express, { type Request, type Response, type NextFunction, type RequestHandler } from 'express';
 
-// SECURITY (GHSA-r6f8-6m52-5jvf): body parsers buffer the whole body in memory, so anything
+// SECURITY: body parsers buffer the whole body in memory, so anything
 // mounted before authentication lets anonymous clients (concurrently) consume memory.
 // The global parser is therefore small; routes that really need more declare a bigger
 // parser themselves, after their auth + permission check.

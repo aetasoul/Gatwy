@@ -263,7 +263,7 @@ router.post('/rdp-file-transfer', (req: Request, res: Response) => {
 
 // POST /:id/recording/chunk — append a binary WebM chunk to the recording file
 // SECURITY: express.raw() here (not at the app level) so the body is only read after
-// router.use(authRequired) and recordingSessionGuard (ownership) have run. (GHSA-r6f8-6m52-5jvf)
+// router.use(authRequired) and recordingSessionGuard (ownership) have run.
 router.post('/:id/recording/chunk', recordingSessionGuard, express.raw({ limit: '100mb', type: '*/*' }), (req: Request, res: Response) => {
   if (!Buffer.isBuffer(req.body)) { res.status(400).json({ error: 'Invalid chunk body' }); return; }
   const userId = req.user!.userId;
