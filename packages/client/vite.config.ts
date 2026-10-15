@@ -19,6 +19,12 @@ export default defineConfig({
   build: {
     outDir: 'dist',
     sourcemap: true,
+    // Fonts stay separate files so the CSP can keep font-src 'self' without data:.
+    assetsInlineLimit: (file) => (/\.woff2?$/.test(file) ? false : undefined),
+  },
+  experimental: {
+    // CSS-referenced assets resolve against the stylesheet, so they work under a BASE_PATH prefix.
+    renderBuiltUrl: (_filename, { hostType }) => (hostType === 'css' ? { relative: true } : undefined),
   },
   server: {
     proxy: {

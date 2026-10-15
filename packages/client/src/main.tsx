@@ -5,6 +5,15 @@ import { App } from './App';
 import { AuthProvider } from './hooks/useAuth';
 import { ThemeProvider } from './hooks/useTheme';
 import { BASE_PATH, routerBasename } from './lib/basePath';
+import '@fontsource/fira-code/400.css';
+import '@fontsource/fira-code/500.css';
+import '@fontsource/source-code-pro/400.css';
+import '@fontsource/source-code-pro/500.css';
+import '@fontsource/inconsolata/400.css';
+import '@fontsource/inconsolata/500.css';
+import '@fontsource/roboto-mono/400.css';
+import '@fontsource/roboto-mono/500.css';
+import '@fontsource/ubuntu-mono/400.css';
 import './styles/globals.css';
 
 // Global fetch intercept:
