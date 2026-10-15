@@ -96,6 +96,7 @@ const EVENT_GROUPS: { label: string; events: { value: string; label: string }[] 
       { value: 'session.moonlight.connect', label: 'Moonlight session connected' },
       { value: 'session.moonlight.disconnect', label: 'Moonlight session disconnected' },
       { value: 'session.moonlight.pair', label: 'Moonlight pairing event' },
+      { value: 'session.moonlight.denied', label: 'Moonlight stream refused (host not permitted)' },
       { value: 'session.smb.connect', label: 'SMB session connected' },
       { value: 'session.sftp.connect', label: 'SFTP session connected' },
       { value: 'session.ftp.connect', label: 'FTP session connected' },

@@ -1,6 +1,7 @@
 import http from 'http';
 import type { Server, IncomingMessage } from 'http';
 import type { Duplex } from 'stream';
+import { WebSocketServer, WebSocket, type RawData } from 'ws';
 import {
   ensureMoonlightWeb,
   getMoonlightRuntimeError,
@@ -10,6 +11,14 @@ import {
   moonlightUpstream,
 } from '../services/moonlightWeb.js';
 import { authorizeMoonlightAccess } from './moonlightAuth.js';
+import {
+  canAccessMoonlightHost,
+  classifyMoonlightRequest,
+  isStreamRequestMessage,
+  parseStreamRequest,
+} from './moonlightGuard.js';
+import { logAudit } from '../services/audit.js';
+import { resolveClientIp } from '../services/ip.js';
 import { injectGatwyMoonlightChrome, shouldThemeMoonlightHtml } from './moonlightChrome.js';
 
 const PREFIX = '/mlw';
@@ -34,11 +43,6 @@ function shouldProxy(url: string | undefined, prefix: string): boolean {
   return url === prefix || url.startsWith(`${prefix}/`) || url.startsWith(`${prefix}?`);
 }
 
-/** moonlight-web runs with the full public prefix (BASE_PATH + /mlw), so the path is forwarded as-is. */
-export function upstreamPath(originalUrl: string, reqUrl: string, mountPrefix: string): string {
-  return originalUrl.startsWith(mountPrefix) ? originalUrl : `${mountPrefix}${reqUrl}`;
-}
-
 function unavailableBody() {
   const runtimeError = getMoonlightRuntimeError();
   if (!runtimeError) return MOONLIGHT_UNAVAILABLE_BODY;
@@ -48,6 +52,130 @@ function unavailableBody() {
 function writeUpgradeError(socket: Duplex, status: number, reason: string): void {
   socket.write(`HTTP/1.1 ${status} ${reason}\r\nConnection: close\r\n\r\n`);
   socket.destroy();
+}
+
+const FIRST_MESSAGE_TIMEOUT_MS = 10_000;
+/** Client messages buffered while the upstream socket is still connecting. */
+const MAX_PENDING_BYTES = 1024 * 1024;
+/** Unflushed upstream->client bytes at which the upstream socket is paused / resumed. */
+const HIGH_WATER_BYTES = 8 * 1024 * 1024;
+const LOW_WATER_BYTES = 2 * 1024 * 1024;
+
+function rawBuffer(data: RawData): Buffer {
+  if (Buffer.isBuffer(data)) return data;
+  if (Array.isArray(data)) return Buffer.concat(data);
+  return Buffer.from(data);
+}
+
+/**
+ * Terminate the stream WebSocket in Gatwy instead of piping raw bytes: moonlight-web reads
+ * `host_id` from the first message and cannot tell Gatwy users apart, so Gatwy holds the
+ * client until that message is validated against the user's accessible connections and
+ * only then opens the upstream socket and forwards the re-serialized message.
+ */
+export function bridgeStream(
+  client: WebSocket,
+  userId: string,
+  req: IncomingMessage,
+  path: string,
+  header: { name: string; value: string },
+  target: { host: string; port: number } = moonlightUpstream(),
+): void {
+  let upstream: WebSocket | null = null;
+  let started = false;
+  let upstreamOpen = false;
+  const pending: { data: RawData; isBinary: boolean }[] = [];
+  let pendingBytes = 0;
+  let inflight = 0;
+  let paused = false;
+
+  const reject = (reason: string) => {
+    clearTimeout(timer);
+    if (client.readyState === WebSocket.OPEN || client.readyState === WebSocket.CONNECTING) {
+      client.close(1008, reason);
+    }
+    upstream?.terminate();
+  };
+  const timer = setTimeout(() => reject('No stream request'), FIRST_MESSAGE_TIMEOUT_MS);
+
+  const connectUpstream = (forward: string) => {
+    const headers: Record<string, string> = { [header.name]: header.value };
+    if (typeof req.headers.origin === 'string') headers.origin = req.headers.origin;
+    if (typeof req.headers['user-agent'] === 'string') headers['user-agent'] = req.headers['user-agent'];
+
+    const ws = new WebSocket(`ws://${target.host}:${target.port}${path}`, { headers, perMessageDeflate: false });
+    upstream = ws;
+
+    ws.on('open', () => {
+      upstreamOpen = true;
+      ws.send(forward);
+      for (const m of pending.splice(0)) ws.send(m.data, { binary: m.isBinary });
+      pendingBytes = 0;
+    });
+    ws.on('message', (data, isBinary) => {
+      if (client.readyState !== WebSocket.OPEN) return;
+      const length = rawBuffer(data).length;
+      inflight += length;
+      client.send(data, { binary: isBinary }, () => {
+        inflight -= length;
+        if (paused && inflight <= LOW_WATER_BYTES) {
+          paused = false;
+          ws.resume();
+        }
+      });
+      if (!paused && inflight >= HIGH_WATER_BYTES) {
+        paused = true;
+        ws.pause();
+      }
+    });
+    ws.on('close', () => {
+      if (client.readyState === WebSocket.OPEN) client.close();
+    });
+    ws.on('unexpected-response', () => reject('Moonlight upstream refused the stream'));
+    ws.on('error', () => reject('Moonlight upstream error'));
+  };
+
+  client.on('message', (data, isBinary) => {
+    if (!started) {
+      started = true;
+      clearTimeout(timer);
+      if (isBinary) { reject('Expected a stream request'); return; }
+      const request = parseStreamRequest(rawBuffer(data).toString('utf8'));
+      if (!request.ok) { reject(request.reason); return; }
+      if (!canAccessMoonlightHost(userId, request.hostId)) {
+        // `path` is the classified path (never the raw URL), so no query string reaches the log.
+        logAudit({
+          userId, eventType: 'session.moonlight.denied',
+          target: path,
+          details: { hostId: request.hostId, reason: 'Host not permitted' },
+          ipAddress: resolveClientIp(req),
+        });
+        reject('Host not permitted');
+        return;
+      }
+      connectUpstream(request.forward);
+      return;
+    }
+
+    // The target host is fixed by the first message; a later request is never legitimate.
+    if (!isBinary && isStreamRequestMessage(rawBuffer(data).toString('utf8'))) {
+      reject('Unexpected stream request');
+      return;
+    }
+
+    if (upstream && upstreamOpen) {
+      upstream.send(data, { binary: isBinary });
+      return;
+    }
+    pendingBytes += rawBuffer(data).length;
+    if (pendingBytes > MAX_PENDING_BYTES) { reject('Too much data before the stream started'); return; }
+    pending.push({ data, isBinary });
+  });
+  client.on('close', () => {
+    clearTimeout(timer);
+    upstream?.terminate();
+  });
+  client.on('error', () => reject('Client error'));
 }
 
 /**
@@ -75,6 +203,13 @@ export function setupMoonlightProxy(server: Server, app: import('express').Expre
       return;
     }
 
+    // Fail-closed allowlist; the normalized path is what gets forwarded, never the raw URL.
+    const decision = classifyMoonlightRequest(req.method, req.originalUrl, false, mountPrefix);
+    if (decision.kind !== 'http') {
+      res.status(decision.kind === 'deny' ? decision.status : 403).json({ error: 'Forbidden' });
+      return;
+    }
+
     try {
       await ensureMoonlightWeb();
     } catch (err) {
@@ -86,7 +221,8 @@ export function setupMoonlightProxy(server: Server, app: import('express').Expre
     }
 
     const upstream = moonlightUpstream();
-    const targetPath = upstreamPath(req.originalUrl, req.url, mountPrefix);
+    // decision.path carries the full mount prefix: moonlight-web runs with BASE_PATH + /mlw.
+    const targetPath = `${decision.path}${decision.search}`;
 
     const headers: http.OutgoingHttpHeaders = { ...req.headers, host: `${upstream.host}:${upstream.port}` };
     headers[header.name] = header.value;
@@ -145,6 +281,8 @@ export function setupMoonlightProxy(server: Server, app: import('express').Expre
     req.pipe(proxyReq);
   });
 
+  const streamWss = new WebSocketServer({ noServer: true, perMessageDeflate: false });
+
   server.on('upgrade', (req: IncomingMessage, socket: Duplex, head: Buffer) => {
     const url = req.url ?? '';
     if (!shouldProxy(url, mountPrefix)) return;
@@ -163,6 +301,13 @@ export function setupMoonlightProxy(server: Server, app: import('express').Expre
       return;
     }
 
+    // Only the stream WebSocket is reachable; the host it targets is checked in bridgeStream().
+    const decision = classifyMoonlightRequest(req.method ?? 'GET', url, true, mountPrefix);
+    if (decision.kind !== 'stream-ws') {
+      writeUpgradeError(socket, 403, 'Forbidden');
+      return;
+    }
+
     void (async () => {
       try {
         await ensureMoonlightWeb();
@@ -171,65 +316,9 @@ export function setupMoonlightProxy(server: Server, app: import('express').Expre
         return;
       }
 
-      const upstream = moonlightUpstream();
-      const headers: http.OutgoingHttpHeaders = { ...req.headers, host: `${upstream.host}:${upstream.port}` };
-      headers[header.name] = header.value;
-      delete headers['authorization'];
-      delete headers['cookie'];
-
-      const proxyReq = http.request({
-        host: upstream.host,
-        port: upstream.port,
-        path: url,
-        method: 'GET',
-        headers,
+      streamWss.handleUpgrade(req, socket, head, (client) => {
+        bridgeStream(client, auth.userId, req, decision.path, header);
       });
-
-      proxyReq.on('upgrade', (proxyRes, proxySocket, proxyHead) => {
-        const lines = [
-          'HTTP/1.1 101 Switching Protocols',
-          ...Object.entries(proxyRes.headers).flatMap(([k, v]) => {
-            if (v === undefined) return [];
-            if (Array.isArray(v)) return v.map((item) => `${k}: ${item}`);
-            return [`${k}: ${v}`];
-          }),
-          '',
-          '',
-        ];
-        socket.write(lines.join('\r\n'));
-        if (proxyHead.length) proxySocket.write(proxyHead);
-        if (head.length) socket.write(head);
-
-        proxySocket.pipe(socket);
-        socket.pipe(proxySocket);
-
-        proxySocket.on('error', () => socket.destroy());
-        socket.on('error', () => proxySocket.destroy());
-      });
-
-      proxyReq.on('error', () => {
-        try {
-          socket.write('HTTP/1.1 502 Bad Gateway\r\nConnection: close\r\n\r\n');
-        } catch { /* ignore */ }
-        socket.destroy();
-      });
-
-      proxyReq.on('response', (res) => {
-        const lines = [
-          `HTTP/1.1 ${res.statusCode} ${res.statusMessage || ''}`.trim(),
-          ...Object.entries(res.headers).flatMap(([k, v]) => {
-            if (v === undefined) return [];
-            if (Array.isArray(v)) return v.map((item) => `${k}: ${item}`);
-            return [`${k}: ${v}`];
-          }),
-          '',
-          '',
-        ];
-        socket.write(lines.join('\r\n'));
-        res.pipe(socket);
-      });
-
-      proxyReq.end();
     })();
   });
 }
