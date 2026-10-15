@@ -78,6 +78,16 @@ describe('GET /rdp-in-use', () => {
     assert.equal((await ask()).status, 400);
   });
 
+  it('is refused with 401 without a login', async () => {
+    session('s-anon', 'u-bob', 'rdp', 'win-host.lan', 3389);
+    const res = await fetch(`${baseUrl}/rdp-in-use?connectionId=c-alice-rdp`);
+    assert.equal(res.status, 401);
+  });
+
+  it('treats a repeated connectionId as missing', async () => {
+    assert.equal((await ask('c-alice-rdp&connectionId=c-alice-rdp')).status, 400);
+  });
+
   it('answers 404 for a connection the caller cannot open, so existence is not revealed', async () => {
     session('s1', 'u-bob', 'rdp', 'private-host', 3389);
     assert.equal((await ask('c-bob-private')).status, 404);
