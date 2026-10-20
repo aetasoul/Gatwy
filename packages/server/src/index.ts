@@ -37,6 +37,7 @@ import notificationsRoutes from './routes/notifications.js';
 import databaseRoutes from './routes/database.js';
 import moonlightRoutes from './routes/moonlight.js';
 import { ipRulesMiddleware, guardUpgradesByIpRules } from './middleware/ipRules.js';
+import { createGlobalJsonParser } from './middleware/bodyParsers.js';
 import { isTrustedProxyAddress } from './services/ip.js';
 import { renderIndexHtml, renderManifest } from './services/indexHtml.js';
 
@@ -91,12 +92,12 @@ async function main() {
       },
     },
   }));
-  app.use(`${bp}/api/v1/smb/:connectionId/upload`, express.raw({ limit: '100mb', type: '*/*' }));
-  app.use(`${bp}/api/v1/sftp/:connectionId/upload`, express.raw({ limit: '100mb', type: '*/*' }));
-  app.use(`${bp}/api/v1/ftp/:connectionId/upload`, express.raw({ limit: '100mb', type: '*/*' }));
-  app.use(`${bp}/api/v1/sessions/:id/recording/chunk`, express.raw({ limit: '100mb', type: '*/*' }));
-  app.use(`${bp}/api/v1/backup/import`, express.raw({ limit: '4gb', type: 'application/octet-stream' }));
-  app.use(express.json({ limit: '6mb' })); // allow base64-encoded logos (~4 MB image → ~5.4 MB base64)
+  // Before any body parser: a blocked IP must not get its body buffered.
+  app.use(`${bp}/api/v1`, ipRulesMiddleware);
+  // Small global limit; the settings (logo) and connections-import routes mount a larger
+  // parser themselves, after auth — see middleware/bodyParsers.ts. The exemption paths
+  // include the reverse-proxy prefix.
+  app.use(createGlobalJsonParser(bp));
   app.use(cookieParser());
 
   // CSRF protection: for state-changing API requests that carry a session cookie,
@@ -125,7 +126,6 @@ async function main() {
   });
 
   // API routes
-  app.use(`${bp}/api/v1`, ipRulesMiddleware);
   app.use(`${bp}/api/v1/auth`, authRoutes);
   app.use(`${bp}/api/v1/connections`, connectionRoutes);
   app.use(`${bp}/api/v1/credentials`, credentialRoutes);
@@ -149,7 +149,12 @@ async function main() {
 
   // Global JSON error handler — prevents Express from returning HTML 500 pages
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  app.use((err: Error, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
+  app.use((err: Error & { status?: number }, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
+    // body-parser errors (413 too large, 400 malformed JSON) carry a 4xx status; keep it
+    if (err.status && err.status >= 400 && err.status < 500) {
+      if (!res.headersSent) res.status(err.status).json({ error: err.status === 413 ? 'Request body too large' : 'Bad request' });
+      return;
+    }
     console.error('[Gatwy] Unhandled error:', err.message);
     if (!res.headersSent) {
       res.status(500).json({ error: 'Internal server error' });

@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
 import { useAuth } from '../hooks/useAuth';
 import { getWsTicket } from '../lib/wsTicket';
+import { ADMIN_DISCONNECT_CODE, ADMIN_DISCONNECT_REASON } from '../lib/adminDisconnect';
 import { DisconnectOverlay } from './DisconnectOverlay';
 import { VncControlPanel } from './VncControlPanel';
 import { VncMobileKeyboard } from './VncMobileKeyboard';
@@ -57,6 +58,7 @@ export function VncSession({ connectionId, connectionName, isActive, onStatusCha
 
     let cancelled = false;
     let sessionRevoked = false;
+    let adminDisconnected = false;
     let rfb: import('@novnc/novnc').default | null = null;
     let resizeObserver: ResizeObserver | null = null;
     const onRevoked = () => { sessionRevoked = true; };
@@ -93,6 +95,9 @@ export function VncSession({ connectionId, connectionName, isActive, onStatusCha
         // property: send"). Use a plain-object wrapper: all required props are own
         // enumerable properties that Object.keys() reliably finds.
         const nativeWs = new WebSocket(wsUrl);
+        nativeWs.addEventListener('close', (ev) => {
+          if (ev.code === ADMIN_DISCONNECT_CODE) adminDisconnected = true;
+        });
         const channel = {
           send: (data: string | ArrayBufferLike | Blob | ArrayBufferView) => nativeWs.send(data as string),
           close: (code?: number, reason?: string) => nativeWs.close(code, reason),
@@ -147,7 +152,9 @@ export function VncSession({ connectionId, connectionName, isActive, onStatusCha
         rfb.addEventListener('disconnect', (e: Event) => {
           if (!cancelled && !sessionRevoked) {
             const detail = (e as CustomEvent).detail;
-            if (detail?.clean === false) {
+            if (adminDisconnected) {
+              setErrorMsg(ADMIN_DISCONNECT_REASON);
+            } else if (detail?.clean === false) {
               setErrorMsg('Connection lost unexpectedly');
             }
             setAndNotify('disconnected');

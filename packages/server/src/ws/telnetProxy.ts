@@ -20,6 +20,7 @@ import { config } from '../config.js';
 import { getSetting } from '../services/settings.js';
 import { v4 as uuid } from 'uuid';
 import { isSessionRevoked } from '../services/loginSession.js';
+import { parseUpgradeUrl } from './upgradeUrl.js';
 
 interface ConnectionRow {
   id: string; host: string; port: number; protocol: string;
@@ -265,14 +266,16 @@ export function setupTelnetProxy(server: https.Server, basePath = ''): void {
   const wss = new WebSocketServer({ noServer: true });
 
   server.on('upgrade', (req: IncomingMessage, socket, head) => {
-    const url = new URL(req.url || '', `https://${req.headers.host}`);
+    const url = parseUpgradeUrl(req);
+    if (!url) { socket.destroy(); return; }
     if (url.pathname === `${basePath}/ws/telnet`) {
       wss.handleUpgrade(req, socket, head, (ws) => wss.emit('connection', ws, req));
     }
   });
 
   wss.on('connection', (ws: WebSocket, req: IncomingMessage) => {
-    const url = new URL(req.url || '', `https://${req.headers.host}`);
+    const url = parseUpgradeUrl(req);
+    if (!url) { ws.close(4001, 'Bad request'); return; }
     const ticketId = url.searchParams.get('ticket');
     const connectionId = url.searchParams.get('connectionId');
     let clientSessionId = url.searchParams.get('sessionId') || uuid();

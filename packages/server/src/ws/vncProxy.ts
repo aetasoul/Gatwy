@@ -66,7 +66,10 @@ export function setupVncProxy(server: Server, basePath = ''): void {
       addActiveSession({
         id: sessionId, userId, connectionId, connectionName: conn.name,
         protocol: 'vnc',
-        end: () => { if (ws.readyState === 1) ws.close(ADMIN_DISCONNECT_CODE, ADMIN_DISCONNECT_REASON); },
+        end: () => {
+          if (ws.readyState === 1) ws.close(ADMIN_DISCONNECT_CODE, ADMIN_DISCONNECT_REASON);
+          else ws.terminate();
+        },
       });
 
       function teardown() {

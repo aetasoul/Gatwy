@@ -18,6 +18,7 @@ import { v4 as uuid } from 'uuid';
 import { performCredSSP } from '../services/credssp.js';
 import { isDangerousTunnelHost } from '../services/ssrfGuard.js';
 import { inspectServerPreActivationFrame, type RedirectInfo } from './rdpRedirect.js';
+import { parseUpgradeUrl } from './upgradeUrl.js';
 
 interface ConnectionRow {
   id: string;
@@ -38,7 +39,8 @@ export function setupRdpProxy(server: https.Server, basePath = ''): void {
   const wssRaw = new WebSocketServer({ noServer: true });
 
   server.on('upgrade', (req: IncomingMessage, socket, head) => {
-    const url = new URL(req.url || '', `https://${req.headers.host}`);
+    const url = parseUpgradeUrl(req);
+    if (!url) { socket.destroy(); return; }
 
     if (url.pathname === `${basePath}/ws/rdp-raw`) {
       wssRaw.handleUpgrade(req, socket, head, (ws) => {
@@ -271,7 +273,8 @@ export function setupRdpProxy(server: https.Server, basePath = ''): void {
 
   // ── RDCleanPath proxy for IronRDP ─────────────────────────────────────────────
   wssRaw.on('connection', (ws: WebSocket, req: IncomingMessage) => {
-    const url = new URL(req.url || '', `https://${req.headers.host}`);
+    const url = parseUpgradeUrl(req);
+    if (!url) { ws.close(4001, 'Bad request'); return; }
     const ticketId = url.searchParams.get('ticket');
     const connectionId = url.searchParams.get('connectionId');
     const clientIp = resolveClientIp(req);
@@ -313,7 +316,10 @@ export function setupRdpProxy(server: https.Server, basePath = ''): void {
       id: sessionId, userId, connectionId, connectionName: conn.name,
       protocol: 'rdp',
       target: targetKey(conn.host, conn.port),
-      end: () => { if (ws.readyState === WebSocket.OPEN) ws.close(ADMIN_DISCONNECT_CODE, ADMIN_DISCONNECT_REASON); },
+      end: () => {
+        if (ws.readyState === WebSocket.OPEN) ws.close(ADMIN_DISCONNECT_CODE, ADMIN_DISCONNECT_REASON);
+        else ws.terminate();
+      },
     });
     ws.once('close', () => removeActiveSession(sessionId));
 
