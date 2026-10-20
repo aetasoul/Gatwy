@@ -315,7 +315,10 @@ export function setupRdpProxy(server: https.Server, basePath = ''): void {
     addActiveSession({
       id: sessionId, userId, connectionId, connectionName: conn.name,
       protocol: 'rdp',
-      end: () => { if (ws.readyState === WebSocket.OPEN) ws.close(ADMIN_DISCONNECT_CODE, ADMIN_DISCONNECT_REASON); },
+      end: () => {
+        if (ws.readyState === WebSocket.OPEN) ws.close(ADMIN_DISCONNECT_CODE, ADMIN_DISCONNECT_REASON);
+        else ws.terminate();
+      },
     });
     ws.once('close', () => removeActiveSession(sessionId));
 

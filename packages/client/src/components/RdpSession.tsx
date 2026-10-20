@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
 import type { Tab } from '../pages/MainLayout';
 import { getWsTicket } from '../lib/wsTicket';
+import { ADMIN_DISCONNECT_CODE, ADMIN_DISCONNECT_REASON } from '../lib/adminDisconnect';
 import { rdpKeyAction } from '../lib/rdpKeyboard';
 import { DisconnectOverlay } from './DisconnectOverlay';
 import { RdpMobileKeyboard } from './RdpMobileKeyboard';
@@ -148,6 +149,7 @@ export function RdpSession({ tab, onStatusChange, onClose }: RdpSessionProps) {
   useEffect(() => {
     let cancelled = false;
     let sessionRevoked = false;
+    let adminDisconnected = false;
     let resizeObserver: ResizeObserver | null = null;
     let resizeTimer: ReturnType<typeof setTimeout> | null = null;
     let canvasStyleGuard: MutationObserver | null = null;
@@ -375,7 +377,25 @@ export function RdpSession({ tab, onStatusChange, onClose }: RdpSessionProps) {
           }
         }
 
-        const session = await builder.connect();
+        // The WASM client owns the proxy socket, so watch its construction to learn why it closed.
+        const NativeWebSocket = window.WebSocket;
+        window.WebSocket = new Proxy(NativeWebSocket, {
+          construct(target, args: ConstructorParameters<typeof WebSocket>) {
+            const sock = new target(...args);
+            if (String(args[0]) === wsUrl) {
+              sock.addEventListener('close', (ev) => {
+                if (ev.code === ADMIN_DISCONNECT_CODE) adminDisconnected = true;
+              });
+            }
+            return sock;
+          },
+        });
+        let session: Awaited<ReturnType<typeof builder.connect>>;
+        try {
+          session = await builder.connect();
+        } finally {
+          window.WebSocket = NativeWebSocket;
+        }
 
         if (cancelled) {
           session.shutdown();
@@ -760,7 +780,7 @@ export function RdpSession({ tab, onStatusChange, onClose }: RdpSessionProps) {
         window.removeEventListener('dragleave', onFileDragLeave);
         window.removeEventListener('drop', onFileDrop);
 
-        if (!cancelled) showDisconnect('The remote session has ended.');
+        if (!cancelled) showDisconnect(adminDisconnected ? ADMIN_DISCONNECT_REASON : 'The remote session has ended.');
       } catch (err) {
         if (!cancelled) {
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
