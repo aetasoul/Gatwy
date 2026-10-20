@@ -25,20 +25,22 @@
 
 Most browser-based remote access tools relay your display through a server-side engine, adding latency and complexity. Gatwy's RDP client runs **entirely in your browser** using WebAssembly — pixel-perfect, low-latency RDP with no middleware, no Java, and no extra containers.
 
-One container. Zero dependencies. Open your browser and connect.
+> **One container. Zero dependencies.** Open your browser and connect.
 
 ---
 
 ## ✨ Highlights
 
-- **10 protocols** — RDP (WebAssembly), SSH, VNC, Telnet, SMB, SFTP, FTP, PostgreSQL, MySQL (Optional - Moonlight)
-- **Split-pane workspace** — unlimited sessions side by side with drag-and-drop tabs
-- **Session recording & audit** — encrypted RDP video, SSH asciinema, command-level audit log with auto-redacted passwords, file activity tracking
-- **Credential library** — reusable username/password and SSH key credentials shared across connections; rotate a password once and every connection follows
-- **Granular RBAC** — 30 fine-grained permissions, custom roles, per-connection sharing, protocol-level access control
-- **Auth flexibility** — local accounts, LDAP/AD, OpenID Connect (SSO), MFA (TOTP), IP access rules
-- **Alerting** — SMTP, Telegram, Slack, Webhook channels with a no-code rule builder
-- **Encrypted backup & restore** — single-file `.geb` backup with AES-256 encryption
+| | Feature | What you get |
+|:-:|---|---|
+|| **10 protocols** | RDP (WebAssembly), SSH, VNC, Telnet, SMB, SFTP, FTP, PostgreSQL, MySQL — plus optional Moonlight |
+|| **Split-pane workspace** | Unlimited sessions side by side with drag-and-drop tabs |
+|| **Session recording & audit** | Encrypted RDP video, SSH asciinema, command-level audit log with auto-redacted passwords, file activity tracking |
+|| **Credential library** | Reusable username/password and SSH key credentials; rotate a password once and every connection follows |
+|| **Granular RBAC** | 30 fine-grained permissions, custom roles, per-connection sharing, protocol-level access control |
+|| **Auth flexibility** | Local accounts, LDAP/AD, OpenID Connect (SSO), MFA (TOTP), IP access rules |
+|| **Alerting** | SMTP, Telegram, Slack, Webhook channels with a no-code rule builder |
+|| **Encrypted backup & restore** | Single-file `.geb` backup with AES-256 encryption |
 
 👉 **[Full feature list →](https://docs.gatwy.dev/features/overview)**
 
@@ -79,32 +81,43 @@ docker run -d \
   ghcr.io/kotoxie/gatwy:latest
 ```
 
-Open **`https://<YOUR_IP>:7443`** — on first launch you'll be prompted to create an admin account.
+Then open **`https://<YOUR_IP>:7443`** and create your admin account on first launch.
 
-> ⚠️ The browser will warn about the self-signed certificate. Accept the exception to proceed, or [bring your own cert](https://docs.gatwy.dev/configuration#tls).
+> [!NOTE]
+> The browser will warn about the self-signed certificate. Accept the exception to proceed, or [bring your own cert](https://docs.gatwy.dev/configuration#tls).
 
 ---
 
 ## ⚙️ Configuration
 
+### Core
+
 | Variable | Default | Description |
 |---|---|---|
-| `GATWY_ENCRYPTION_KEY` | *(auto-generated file)* | 64-char hex AES-256 key. **Set this in production.** Generate with `openssl rand -hex 32` |
+| `GATWY_ENCRYPTION_KEY` | *(auto-generated file)* | 64-char hex AES-256 key. ⚠️ **Set this in production.** Generate with `openssl rand -hex 32` |
 | `PORT` | `7443` | HTTPS port |
-| `TLS_CERT_PATH` / `TLS_KEY_PATH` | *(auto)* | Custom TLS certificate & key paths |
 | `DATA_DIR` | `/app/data` | Database, certs, recordings, and logs |
-| `OIDC_TOKEN_AUTH_METHOD` | `client_secret_basic` | OIDC token endpoint client auth. Use `client_secret_basic` (or `basic`) or `client_secret_post` (or `post`). |
-| `ENABLE_MOONLIGHT` | unset | Opt in to Moonlight / Sunshine. Set to `1`, `true`, or `yes` to download a pinned moonlight-web-stream release at start. Default image stays MIT-clean. |
+| `TLS_CERT_PATH` / `TLS_KEY_PATH` | *(auto)* | Custom TLS certificate & key paths |
+| `BASE_PATH` | `/` *(root)* | URL path prefix for serving behind a reverse proxy (e.g. `/sys/ftp`). Plain path segments only (`A-Z a-z 0-9 . _ ~ -`); leading/trailing slashes are normalized. |
 
-> ⚠️ If no encryption key env var is set, Gatwy auto-generates one at `/app/data/encryption.key` with a warning banner. Fine for home-lab — not recommended for production.
+### Authentication
+
+| Variable | Default | Description |
+|---|---|---|
+| `OIDC_TOKEN_AUTH_METHOD` | `client_secret_basic` | OIDC token endpoint client auth: `client_secret_basic` (or `basic`) or `client_secret_post` (or `post`). |
+
+> **Note:** If no encryption key is set, Gatwy auto-generates one at `/app/data/encryption.key` and shows a warning banner. Fine for a home lab — not recommended for production.
 
 👉 **[Full configuration reference →](https://docs.gatwy.dev)**
 
 ---
 
-## Optional: Moonlight / Sunshine
+## 🌙 Optional: Moonlight / Sunshine
 
-Moonlight is **off by default**. The helper we use, [moonlight-web-stream](https://github.com/MrCreativ3001/moonlight-web-stream), is GPL-3.0. Gatwy does not bundle it. Gatwy itself stays MIT.
+Moonlight is **off by default**. The helper it uses, [moonlight-web-stream](https://github.com/MrCreativ3001/moonlight-web-stream), is GPL-3.0 and is not bundled — Gatwy itself stays MIT.
+
+> [!TIP]
+> Enable it by setting `ENABLE_MOONLIGHT` to `1`, `true`, or `yes`.
 
 ```yaml
 services:
@@ -113,7 +126,9 @@ services:
       - ENABLE_MOONLIGHT=1
 ```
 
-On start the entrypoint downloads a pinned release into `/opt/moonlight-web` and Moonlight shows up in the protocol picker. PIN pairing uses the Sunshine web UI. When the env var is unset, Moonlight stays hidden; stored Moonlight connections are kept and come back if you enable it later.
+On start, the entrypoint downloads a pinned release into `/opt/moonlight-web` and Moonlight appears in the protocol picker. PIN pairing uses the Sunshine web UI.
+
+When the variable is unset, Moonlight is hidden; stored Moonlight connections are kept and return if you enable it later.
 
 See [THIRD_PARTY.md](THIRD_PARTY.md) for the license note and pinned release.
 
@@ -130,7 +145,7 @@ docker compose pull && docker compose up -d
 ## 🛠️ Building from Source
 
 ```bash
-git clone https://github.com/kotoxie/gatwy && cd Gatwy/
+git clone https://github.com/kotoxie/gatwy && cd gatwy
 
 # With Docker
 docker compose up --build -d
