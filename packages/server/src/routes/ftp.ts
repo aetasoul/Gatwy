@@ -1,4 +1,4 @@
-import { Router, type Request, type Response } from 'express';
+import express, { Router, type Request, type Response } from 'express';
 import { PassThrough, Readable } from 'stream';
 import * as ftp from 'basic-ftp';
 import type { ConnectionOptions as TlsConnectionOptions } from 'tls';
@@ -9,6 +9,7 @@ import { applyCredential } from '../services/credentials.js';
 import { logAudit } from '../services/audit.js';
 import { logFileSessionEvent } from '../services/fileSession.js';
 import { resolveClientIp } from '../services/ip.js';
+import { connectionAccessGuard } from '../middleware/preBodyGuards.js';
 import { connectionAccessWhere } from '../services/permissions.js';
 
 /**
@@ -153,7 +154,9 @@ router.get('/:connectionId/download', async (req: Request, res: Response) => {
 });
 
 // POST /:connectionId/upload — upload a file (body is raw buffer / req is readable)
-router.post('/:connectionId/upload', async (req: Request, res: Response) => {
+// SECURITY: express.raw() here (not at the app level) so the body is only read after
+// router.use(authRequired)/requirePermission and connectionAccessGuard have run.
+router.post('/:connectionId/upload', connectionAccessGuard('ftp'), express.raw({ limit: '100mb', type: '*/*' }), async (req: Request, res: Response) => {
   const userId = req.user!.userId;
   const conn = getConn(req.params.connectionId as string, userId, req.user!.role);
   if (!conn) { res.status(404).json({ error: 'Connection not found' }); return; }
@@ -161,11 +164,13 @@ router.post('/:connectionId/upload', async (req: Request, res: Response) => {
   const filePath = req.query.path as string;
   if (!filePath) { res.status(400).json({ error: 'path required' }); return; }
 
+  if (!Buffer.isBuffer(req.body)) { res.status(400).json({ error: 'Invalid upload body' }); return; }
+
   let client: ftp.Client | null = null;
 
   try {
     client = await makeFtpClient(conn);
-    await client.uploadFrom(Readable.from(req.body as Buffer), filePath);
+    await client.uploadFrom(Readable.from(req.body), filePath);
     logFileSessionEvent({ req, userId, connectionId: req.params.connectionId as string, protocol: 'ftp', action: 'upload', path: filePath });
     res.json({ success: true });
   } catch (e: unknown) {
