@@ -783,6 +783,8 @@ export function RdpSession({ tab, onStatusChange, onClose }: RdpSessionProps) {
         if (!cancelled) showDisconnect(adminDisconnected ? ADMIN_DISCONNECT_REASON : 'The remote session has ended.');
       } catch (err) {
         if (!cancelled) {
+          // The close event arrives just before run() rejects, so an admin disconnect also lands here.
+          if (adminDisconnected) { showDisconnect(ADMIN_DISCONNECT_REASON); return; }
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
           const e = err as any;
           let msg: string;
