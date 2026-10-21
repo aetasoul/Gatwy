@@ -26,6 +26,9 @@ export interface ActiveSession {
   protocol: ActiveSessionProtocol;
   /** Closes the session and releases everything it holds. Safe to call once. */
   end: () => void;
+  /** `host:port` of the remote machine (see targetKey). Only used to spot two sessions on the same host,
+   * never returned by the API. Set for RDP. */
+  target?: string;
   startedAt: number;
   status: ActiveSessionStatus;
 }
@@ -56,6 +59,20 @@ export function endActiveSession(id: string): boolean {
   registry.delete(id);
   try { s.end(); } catch { /* the entry is gone either way */ }
   return true;
+}
+
+/** Identity of a remote machine for matching sessions on it: host is case-insensitive. A hostname and
+ * an IP that point to the same machine are not matched. */
+export function targetKey(host: string, port: number): string {
+  return `${host.trim().toLowerCase()}:${port}`;
+}
+
+/** Is a session of another user open on this target? A user's own sessions never count. */
+export function isTargetInUseByOthers(protocol: ActiveSessionProtocol, target: string, userId: string): boolean {
+  for (const s of registry.values()) {
+    if (s.protocol === protocol && s.target === target && s.userId !== userId) return true;
+  }
+  return false;
 }
 
 export function listActiveSessions(): ActiveSession[] {
