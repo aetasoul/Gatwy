@@ -298,7 +298,6 @@ router.post('/rdp-file-transfer', (req: Request, res: Response) => {
 router.post('/:id/recording/chunk', recordingSessionGuard, express.raw({ limit: '100mb', type: '*/*' }), (req: Request, res: Response) => {
   if (!Buffer.isBuffer(req.body)) { res.status(400).json({ error: 'Invalid chunk body' }); return; }
   const userId = req.user!.userId;
-  const canViewAny = userCan(req, 'sessions.view_any');
   const id = req.params.id as string;
   // Validate UUID format to prevent path traversal in recording file path
   if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id)) {
@@ -310,7 +309,7 @@ router.post('/:id/recording/chunk', recordingSessionGuard, express.raw({ limit: 
     [id],
   );
   if (!session) { res.status(404).json({ error: 'Session not found' }); return; }
-  if (!canViewAny && session.user_id !== userId) { res.status(403).json({ error: 'Forbidden' }); return; }
+  if (session.user_id !== userId) { res.status(403).json({ error: 'Forbidden' }); return; }
 
   let filePath = session.recording_path;
   if (!filePath) {
@@ -336,7 +335,6 @@ router.post('/:id/recording/chunk', recordingSessionGuard, express.raw({ limit: 
 // POST /:id/recording/finalize — mark RDP session as ended
 router.post('/:id/recording/finalize', (req: Request, res: Response) => {
   const userId = req.user!.userId;
-  const canViewAny = userCan(req, 'sessions.view_any');
   const id = req.params.id as string;
 
   const session = queryOne<{ user_id: string }>(
@@ -344,7 +342,7 @@ router.post('/:id/recording/finalize', (req: Request, res: Response) => {
     [id],
   );
   if (!session) { res.status(404).json({ error: 'Session not found' }); return; }
-  if (!canViewAny && session.user_id !== userId) { res.status(403).json({ error: 'Forbidden' }); return; }
+  if (session.user_id !== userId) { res.status(403).json({ error: 'Forbidden' }); return; }
 
   execute("UPDATE sessions SET ended_at = datetime('now') WHERE id = ?", [id]);
   // Finalize the in-flight cipher (CTR final() is a no-op but closes cleanly)
