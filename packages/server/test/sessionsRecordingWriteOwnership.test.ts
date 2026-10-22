@@ -26,16 +26,21 @@ let baseUrl: string;
 let ownerToken: string;
 let auditorToken: string;
 
+interface SeedOptions { protocol?: string; endedAt?: string | null; withFile?: boolean }
+
 // Each test gets its own session and recording file, so one test's writes never leak into another's.
-function seedSession(id: string): string {
-  const file = path.join(dataDir, `${id}.webm`);
-  fs.writeFileSync(file, ORIGINAL);
+// withFile=false leaves recording_path empty, like a recording that has not received its first chunk yet.
+function seedSession(id: string, { protocol = 'rdp', endedAt = null, withFile = true }: SeedOptions = {}): string {
+  const file = path.join(dataDir, `${id}.${protocol === 'rdp' ? 'webm' : 'cast'}`);
+  if (withFile) fs.writeFileSync(file, ORIGINAL);
   execute(
-    `INSERT INTO sessions (id, user_id, connection_id, protocol, username, connection_name, recording_path) VALUES (?, ?, ?, 'rdp', ?, ?, ?)`,
-    [id, OWNER, CONN, OWNER, CONN, file],
+    `INSERT INTO sessions (id, user_id, connection_id, protocol, username, connection_name, recording_path, ended_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    [id, OWNER, CONN, protocol, OWNER, CONN, withFile ? file : null, endedAt],
   );
   return file;
 }
+
+const endedAtOf = (id: string) => queryOne<{ ended_at: string | null }>('SELECT ended_at FROM sessions WHERE id = ?', [id])?.ended_at;
 
 before(async () => {
   await initDb();
@@ -89,7 +94,7 @@ describe('recording writes are owner-only, view_any stays read-only', () => {
     const id = '00000000-0000-4000-8000-0000000000c2';
     seedSession(id);
     assert.equal((await finalize(auditorToken, id)).status, 403);
-    assert.equal(queryOne<{ ended_at: string | null }>('SELECT ended_at FROM sessions WHERE id = ?', [id])?.ended_at, null);
+    assert.equal(endedAtOf(id), null);
   });
 
   it('view_any still reads: recording download and activity events are 200', async () => {
@@ -101,12 +106,52 @@ describe('recording writes are owner-only, view_any stays read-only', () => {
     assert.equal(events.status, 200);
   });
 
-  it('the owner can still write: chunk then finalize are 200 and the session is ended', async () => {
+  it('the owner can still write: first chunk creates the file, finalize ends the session', async () => {
     const id = '00000000-0000-4000-8000-0000000000c4';
-    const file = seedSession(id);
+    seedSession(id, { withFile: false });
     assert.equal((await chunk(ownerToken, id)).status, 200);
-    assert.notDeepEqual(fs.readFileSync(file), ORIGINAL);
+    const file = queryOne<{ recording_path: string }>('SELECT recording_path FROM sessions WHERE id = ?', [id])!.recording_path;
+    assert.ok(fs.statSync(file).size > 0);
+    assert.equal((await chunk(ownerToken, id)).status, 200);
     assert.equal((await finalize(ownerToken, id)).status, 200);
-    assert.ok(queryOne<{ ended_at: string | null }>('SELECT ended_at FROM sessions WHERE id = ?', [id])?.ended_at);
+    assert.ok(endedAtOf(id));
+  });
+});
+
+describe('the owner cannot rewrite a finished or foreign-protocol recording', () => {
+  it('chunk after the session ended is 409 and the recording is left untouched', async () => {
+    const id = '00000000-0000-4000-8000-0000000000d1';
+    const file = seedSession(id, { endedAt: '2026-01-01 00:00:00' });
+    assert.equal((await chunk(ownerToken, id)).status, 409);
+    assert.deepEqual(fs.readFileSync(file), ORIGINAL);
+  });
+
+  it('chunk on an SSH or Telnet session is 400 and its .cast is left untouched', async () => {
+    const id = '00000000-0000-4000-8000-0000000000d2';
+    const file = seedSession(id, { protocol: 'ssh' });
+    assert.equal((await chunk(ownerToken, id)).status, 400);
+    assert.deepEqual(fs.readFileSync(file), ORIGINAL);
+  });
+
+  it('finalize on an SSH or Telnet session is 400: it is not ended and the .cast is not re-encrypted', async () => {
+    const id = '00000000-0000-4000-8000-0000000000d3';
+    const file = seedSession(id, { protocol: 'telnet' });
+    assert.equal((await finalize(ownerToken, id)).status, 400);
+    assert.equal(endedAtOf(id), null);
+    assert.deepEqual(fs.readFileSync(file), ORIGINAL);
+  });
+
+  it('finalize twice keeps the first end time', async () => {
+    const id = '00000000-0000-4000-8000-0000000000d4';
+    seedSession(id, { endedAt: '2026-01-01 00:00:00', withFile: false });
+    assert.equal((await finalize(ownerToken, id)).status, 200);
+    assert.equal(endedAtOf(id), '2026-01-01 00:00:00');
+  });
+
+  it('a chunk for a live session whose writer was lost (restart) fails instead of truncating the file', async () => {
+    const id = '00000000-0000-4000-8000-0000000000d5';
+    const file = seedSession(id);
+    assert.equal((await chunk(ownerToken, id)).status, 500);
+    assert.deepEqual(fs.readFileSync(file), ORIGINAL);
   });
 });

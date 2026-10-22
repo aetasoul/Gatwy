@@ -304,12 +304,15 @@ router.post('/:id/recording/chunk', recordingSessionGuard, express.raw({ limit: 
     res.status(400).json({ error: 'Invalid session id' }); return;
   }
 
-  const session = queryOne<{ recording_path: string | null; user_id: string }>(
-    'SELECT recording_path, user_id FROM sessions WHERE id = ?',
+  const session = queryOne<{ recording_path: string | null; user_id: string; protocol: string; ended_at: string | null }>(
+    'SELECT recording_path, user_id, protocol, ended_at FROM sessions WHERE id = ?',
     [id],
   );
   if (!session) { res.status(404).json({ error: 'Session not found' }); return; }
   if (session.user_id !== userId) { res.status(403).json({ error: 'Forbidden' }); return; }
+  // SSH and Telnet recordings are written by the server, never through this route.
+  if (session.protocol !== 'rdp') { res.status(400).json({ error: 'Not an RDP session' }); return; }
+  if (session.ended_at) { res.status(409).json({ error: 'Session already ended' }); return; }
 
   let filePath = session.recording_path;
   if (!filePath) {
@@ -321,12 +324,15 @@ router.post('/:id/recording/chunk', recordingSessionGuard, express.raw({ limit: 
   try {
     let writer = rdpWriters.get(id);
     if (!writer) {
-      // First chunk — create the encrypted file with header and a new cipher context
+      // First chunk — create the encrypted file with header and a new cipher context.
+      // Fails if the file already exists (writer lost to a restart) rather than truncating it.
       writer = openRdpRecordingFile(filePath);
       rdpWriters.set(id, writer);
     }
     writer.writeChunk(req.body);
   } catch {
+    // A failed append leaves the cipher out of step with the file, so later chunks must not reuse it
+    rdpWriters.delete(id);
     res.status(500).json({ error: 'Failed to write chunk' }); return;
   }
   res.json({ ok: true });
@@ -337,14 +343,16 @@ router.post('/:id/recording/finalize', (req: Request, res: Response) => {
   const userId = req.user!.userId;
   const id = req.params.id as string;
 
-  const session = queryOne<{ user_id: string }>(
-    'SELECT user_id FROM sessions WHERE id = ?',
+  const session = queryOne<{ user_id: string; protocol: string }>(
+    'SELECT user_id, protocol FROM sessions WHERE id = ?',
     [id],
   );
   if (!session) { res.status(404).json({ error: 'Session not found' }); return; }
   if (session.user_id !== userId) { res.status(403).json({ error: 'Forbidden' }); return; }
+  if (session.protocol !== 'rdp') { res.status(400).json({ error: 'Not an RDP session' }); return; }
 
-  execute("UPDATE sessions SET ended_at = datetime('now') WHERE id = ?", [id]);
+  // The client may finalize more than once (recorder stop and tab close), keep the first end time
+  execute("UPDATE sessions SET ended_at = COALESCE(ended_at, datetime('now')) WHERE id = ?", [id]);
   // Finalize the in-flight cipher (CTR final() is a no-op but closes cleanly)
   const writer = rdpWriters.get(id);
   if (writer) { writer.close(); rdpWriters.delete(id); }
